@@ -3,6 +3,26 @@ import pandas as pd
 from data_loader import load_all_data
 
 
+def get_dataset_summary():
+    """
+    Get simple dataset information.
+
+    This function is used by the Streamlit main page.
+    """
+    books, users, ratings = load_all_data()
+
+    summary = {
+        "total_books": len(books),
+        "total_users": len(users),
+        "total_ratings": len(ratings),
+        "average_rating": round(ratings["Rating"].mean(), 2),
+        "highest_rating": ratings["Rating"].max(),
+        "lowest_rating": ratings["Rating"].min()
+    }
+
+    return summary
+
+
 def get_content_score(books, selected_book_title):
     """
     Calculate simple content-based score.
@@ -70,13 +90,16 @@ def get_collaborative_score(ratings, user_id):
     return average_ratings
 
 
-def hybrid_recommendation(user_id, selected_book_title, top_n=10):
+def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=True):
     """
     Recommend books using hybrid recommendation.
 
     Hybrid recommendation combines:
     1. Content-based score
     2. Collaborative filtering score
+
+    remove_rated:
+        True means books already rated by the user will not be recommended.
 
     Return:
         recommendation dataframe
@@ -100,10 +123,11 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10):
     # Remove the selected book itself from the recommendation result.
     recommendations = recommendations[recommendations["Title"] != selected_book_title]
 
-    # Remove books that the selected user has already rated.
-    user_ratings = ratings[ratings["User_ID"] == user_id]
-    rated_books = user_ratings["ISBN"].tolist()
-    recommendations = recommendations[~recommendations["ISBN"].isin(rated_books)]
+    if remove_rated:
+        # Remove books that the selected user has already rated.
+        user_ratings = ratings[ratings["User_ID"] == user_id]
+        rated_books = user_ratings["ISBN"].tolist()
+        recommendations = recommendations[~recommendations["ISBN"].isin(rated_books)]
 
     # Calculate final hybrid score.
     # 60% content-based score + 40% collaborative score.
@@ -132,6 +156,64 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10):
     ]
 
     return recommendations.head(top_n)
+
+
+def evaluate_hybrid(user_id, selected_book_title, top_n=10):
+    """
+    Evaluate the hybrid recommender using Precision, Recall and F1 score.
+
+    In this simple evaluation:
+    - Books rated 7 or above by the user are treated as liked books.
+    - Recommended books are compared with the liked books.
+    """
+    books, users, ratings = load_all_data()
+
+    # Find books that the user likes.
+    user_ratings = ratings[ratings["User_ID"] == user_id]
+    liked_books = user_ratings[user_ratings["Rating"] >= 7]["ISBN"].tolist()
+
+    # For evaluation, we allow already rated books to appear.
+    # This makes it possible to compare recommendations with user's liked books.
+    recommendations = hybrid_recommendation(
+        user_id=user_id,
+        selected_book_title=selected_book_title,
+        top_n=top_n,
+        remove_rated=False
+    )
+
+    recommended_books = recommendations["ISBN"].tolist()
+
+    # Count how many recommended books are actually liked by the user.
+    correct_recommendations = 0
+
+    for isbn in recommended_books:
+        if isbn in liked_books:
+            correct_recommendations += 1
+
+    if len(recommended_books) == 0:
+        precision = 0
+    else:
+        precision = correct_recommendations / len(recommended_books)
+
+    if len(liked_books) == 0:
+        recall = 0
+    else:
+        recall = correct_recommendations / len(liked_books)
+
+    if precision + recall == 0:
+        f1_score = 0
+    else:
+        f1_score = 2 * precision * recall / (precision + recall)
+
+    evaluation_result = {
+        "precision": round(precision, 3),
+        "recall": round(recall, 3),
+        "f1_score": round(f1_score, 3),
+        "liked_books": len(liked_books),
+        "correct_recommendations": correct_recommendations
+    }
+
+    return evaluation_result
 
 
 def get_book_titles():
