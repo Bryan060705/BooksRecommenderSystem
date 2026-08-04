@@ -8,6 +8,25 @@ CURRENT_FOLDER = os.path.dirname(os.path.abspath(__file__))
 DATASET_PATH = os.path.join(CURRENT_FOLDER, "Dataset")
 
 
+def read_csv_file(file_path):
+    """
+    Read a CSV file using different encodings.
+
+    Some CSV files are not saved as UTF-8.
+    This function helps prevent UnicodeDecodeError on Streamlit Cloud.
+    """
+    encodings = ["utf-8-sig", "cp1252", "latin-1"]
+
+    for encoding in encodings:
+        try:
+            return pd.read_csv(file_path, encoding=encoding)
+        except UnicodeDecodeError:
+            pass
+
+    # Final backup method. Invalid characters will be replaced.
+    return pd.read_csv(file_path, encoding="latin-1", encoding_errors="replace")
+
+
 def load_books():
     """
     Load Books.csv and do simple cleaning.
@@ -16,7 +35,7 @@ def load_books():
         books dataframe
     """
     books_path = os.path.join(DATASET_PATH, "Books.csv")
-    books = pd.read_csv(books_path, encoding="utf-8-sig")
+    books = read_csv_file(books_path)
 
     # Remove duplicated books based on ISBN.
     books = books.drop_duplicates(subset="ISBN")
@@ -41,7 +60,7 @@ def load_users():
         users dataframe
     """
     users_path = os.path.join(DATASET_PATH, "Users.csv")
-    users = pd.read_csv(users_path, encoding="utf-8-sig")
+    users = read_csv_file(users_path)
 
     # Remove duplicated users.
     users = users.drop_duplicates(subset="User_ID")
@@ -64,7 +83,7 @@ def load_ratings():
         ratings dataframe
     """
     ratings_path = os.path.join(DATASET_PATH, "Ratings.csv")
-    ratings = pd.read_csv(ratings_path, encoding="utf-8-sig")
+    ratings = read_csv_file(ratings_path)
 
     # Make sure rating is numeric.
     ratings["Rating"] = pd.to_numeric(ratings["Rating"], errors="coerce")
