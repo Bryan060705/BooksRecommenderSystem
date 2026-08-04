@@ -1,6 +1,7 @@
 import pandas as pd
 
 from data_loader import load_all_data
+from content_based import get_content_scores
 
 
 def get_dataset_summary():
@@ -22,58 +23,6 @@ def get_dataset_summary():
 
     return summary
 
-
-def get_content_score(books, selected_book_title):
-    """
-    Calculate simple content-based score.
-
-    The score is based on:
-    1. Same genre
-    2. Same author
-    3. Similar keywords
-    """
-    books = books.copy()
-
-    # Find the selected book from the dataset.
-    selected_book = books[books["Title"] == selected_book_title]
-
-    # If the book title cannot be found, give all books 0 content score.
-    if selected_book.empty:
-        books["content_score"] = 0
-        return books[["ISBN", "content_score"]]
-
-    selected_book = selected_book.iloc[0]
-    selected_genre = selected_book["Genre"]
-    selected_author = selected_book["Author"]
-    selected_keywords = str(selected_book["Keywords"]).lower().split(", ")
-
-    content_scores = []
-
-    for index, book in books.iterrows():
-        score = 0
-
-        # Books with the same genre get higher score.
-        if book["Genre"] == selected_genre:
-            score += 0.5
-
-        # Books by the same author get extra score.
-        if book["Author"] == selected_author:
-            score += 0.3
-
-        # Books with similar keywords get extra score.
-        book_keywords = str(book["Keywords"]).lower().split(", ")
-        same_keywords = set(selected_keywords).intersection(set(book_keywords))
-
-        if len(same_keywords) > 0:
-            score += 0.2
-
-        content_scores.append(score)
-
-    books["content_score"] = content_scores
-
-    return books[["ISBN", "content_score"]]
-
-
 def get_collaborative_score(ratings, user_id):
     """
     Calculate simple collaborative filtering score.
@@ -89,7 +38,6 @@ def get_collaborative_score(ratings, user_id):
 
     return average_ratings
 
-
 def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=True):
     """
     Recommend books using hybrid recommendation.
@@ -104,42 +52,75 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=T
     Return:
         recommendation dataframe
     """
+
     books, users, ratings = load_all_data()
 
-    # Get content-based score.
-    content_scores = get_content_score(books, selected_book_title)
-
-    # Get collaborative filtering score.
-    collaborative_scores = get_collaborative_score(ratings, user_id)
-
-    # Combine book details with both scores.
-    recommendations = books.merge(content_scores, on="ISBN", how="left")
-    recommendations = recommendations.merge(collaborative_scores, on="ISBN", how="left")
-
-    # Some books may not have ratings, so replace missing score with 0.
-    recommendations["content_score"] = recommendations["content_score"].fillna(0)
-    recommendations["collaborative_score"] = recommendations["collaborative_score"].fillna(0)
-
-    # Remove the selected book itself from the recommendation result.
-    recommendations = recommendations[recommendations["Title"] != selected_book_title]
-
-    if remove_rated:
-        # Remove books that the selected user has already rated.
-        user_ratings = ratings[ratings["User_ID"] == user_id]
-        rated_books = user_ratings["ISBN"].tolist()
-        recommendations = recommendations[~recommendations["ISBN"].isin(rated_books)]
-
-    # Calculate final hybrid score.
-    # 60% content-based score + 40% collaborative score.
-    recommendations["hybrid_score"] = (
-        recommendations["content_score"] * 0.6
-        + recommendations["collaborative_score"] * 0.4
+    # Get content-based score from content_based.py
+    content_scores = get_content_scores(
+        books,
+        selected_book_title
     )
 
-    # Sort by final score.
-    recommendations = recommendations.sort_values(by="hybrid_score", ascending=False)
+    # Get collaborative filtering score
+    collaborative_scores = get_collaborative_score(
+        ratings,
+        user_id
+    )
 
-    # Select columns that are useful for Streamlit display.
+    # Combine book details with both scores
+    recommendations = books.merge(
+        content_scores,
+        on="ISBN",
+        how="left"
+    )
+
+    recommendations = recommendations.merge(
+        collaborative_scores,
+        on="ISBN",
+        how="left"
+    )
+
+    # Replace missing scores with 0
+    recommendations["content_score"] = (
+        recommendations["content_score"].fillna(0)
+    )
+
+    recommendations["collaborative_score"] = (
+        recommendations["collaborative_score"].fillna(0)
+    )
+
+    # Remove selected book itself
+    recommendations = recommendations[
+        recommendations["Title"] != selected_book_title
+    ]
+
+    if remove_rated:
+        # Remove books already rated by this user
+        user_ratings = ratings[
+            ratings["User_ID"] == user_id
+        ]
+
+        rated_books = user_ratings["ISBN"].tolist()
+
+        recommendations = recommendations[
+            ~recommendations["ISBN"].isin(rated_books)
+        ]
+
+    # Calculate final hybrid score
+    # 60% content-based + 40% collaborative filtering
+    recommendations["hybrid_score"] = (
+        recommendations["content_score"] * 0.6
+        +
+        recommendations["collaborative_score"] * 0.4
+    )
+
+    # Sort highest score first
+    recommendations = recommendations.sort_values(
+        by="hybrid_score",
+        ascending=False
+    )
+
+    # Columns displayed in Streamlit
     recommendations = recommendations[
         [
             "ISBN",
@@ -156,7 +137,6 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=T
     ]
 
     return recommendations.head(top_n)
-
 
 def evaluate_hybrid(user_id, selected_book_title, top_n=10):
     """
