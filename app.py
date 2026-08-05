@@ -17,8 +17,6 @@ st.set_page_config(
 
 
 st.title("Book Recommendation System")
-st.write("This prototype recommends books using a hybrid recommendation algorithm.")
-
 
 # Load data needed for the user interface.
 user_ids = get_user_ids()
