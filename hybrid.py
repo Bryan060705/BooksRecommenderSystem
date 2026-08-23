@@ -1,7 +1,6 @@
-import pandas as pd
-
 from data_loader import load_all_data
 from content_based import get_content_scores
+from collaborative import get_collaborative_score
 
 
 def get_dataset_summary():
@@ -22,21 +21,6 @@ def get_dataset_summary():
     }
 
     return summary
-
-def get_collaborative_score(ratings, user_id):
-    """
-    Calculate simple collaborative filtering score.
-
-    In this simple version, the score is based on the average rating of each book.
-    Books already rated by the selected user will be removed later.
-    """
-    average_ratings = ratings.groupby("ISBN")["Rating"].mean().reset_index()
-    average_ratings = average_ratings.rename(columns={"Rating": "collaborative_score"})
-
-    # Convert rating from 1-10 scale to 0-1 scale.
-    average_ratings["collaborative_score"] = average_ratings["collaborative_score"] / 10
-
-    return average_ratings
 
 def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=True):
     """

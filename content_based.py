@@ -8,9 +8,6 @@ This module recommends books based on their own features:
 
 """
 
-import pandas as pd
-
-
 def _get_selected_book(books, selected_book_title):
     """
     Get the selected book information from the dataset.

@@ -1,7 +1,8 @@
 import streamlit as st
 
+from collaborative import collaborative_recommendation
 from content_based import get_similar_books
-from data_loader import load_all_data, load_books
+from data_loader import load_books
 from hybrid import (
     evaluate_hybrid,
     get_book_titles,
@@ -62,45 +63,6 @@ st.sidebar.metric("Total Users", summary["total_users"])
 st.sidebar.metric("Total Ratings", summary["total_ratings"])
 st.sidebar.metric("Average Rating", summary["average_rating"])
 st.sidebar.write("Rating Range:", str(summary["lowest_rating"]) + " - " + str(summary["highest_rating"]))
-
-
-def get_collaborative_recommendations(selected_book_title, top_n):
-    """
-    Get collaborative filtering recommendations.
-
-    This simple version recommends books with higher average ratings.
-    """
-    books, users, ratings = load_all_data()
-
-    average_ratings = ratings.groupby("ISBN")["Rating"].mean().reset_index()
-    average_ratings = average_ratings.rename(columns={"Rating": "collaborative_score"})
-
-    # Convert rating from 1-10 scale to 0-1 scale.
-    average_ratings["collaborative_score"] = average_ratings["collaborative_score"] / 10
-
-    recommendations = books.merge(average_ratings, on="ISBN", how="left")
-    recommendations["collaborative_score"] = recommendations["collaborative_score"].fillna(0)
-
-    # Remove the selected book itself.
-    recommendations = recommendations[recommendations["Title"] != selected_book_title]
-
-    recommendations = recommendations.sort_values(
-        by="collaborative_score",
-        ascending=False
-    )
-
-    return recommendations[
-        [
-            "ISBN",
-            "Title",
-            "Author",
-            "Genre",
-            "Year",
-            "Publisher",
-            "Image_URL",
-            "collaborative_score",
-        ]
-    ].head(top_n)
 
 
 def show_score(label, score):
@@ -164,7 +126,8 @@ def show_algorithm_info(method):
 
     elif method == "Collaborative Filtering":
         st.sidebar.write("Collaborative Filtering")
-        st.sidebar.write("Recommends books with higher rating patterns from the dataset.")
+        st.sidebar.write("Uses rating patterns from similar users in the dataset.")
+        st.sidebar.write("Auto-selected User:", default_user)
 
     elif method == "Hybrid":
         st.sidebar.write("Hybrid Recommendation")
@@ -208,10 +171,11 @@ if recommend_button:
         display_recommendations(recommendations, recommendation_method)
 
     elif recommendation_method == "Collaborative Filtering":
-        recommendations = get_collaborative_recommendations(
-            selected_book_title=selected_book,
-            top_n=top_n
+        recommendations = collaborative_recommendation(
+            user_id=default_user,
+            top_n=top_n + 1
         )
+        recommendations = recommendations[recommendations["Title"] != selected_book].head(top_n)
 
         st.subheader("Collaborative Filtering Recommendation Result")
         display_recommendations(recommendations, recommendation_method)
