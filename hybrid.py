@@ -206,6 +206,21 @@ def get_book_titles():
     return books["Title"].tolist()
 
 
+def get_default_user():
+    """
+    Select one user automatically from the dataset.
+
+    The most active user is selected because this user has more ratings.
+    This makes evaluation more meaningful.
+    """
+    books, users, ratings = load_all_data()
+
+    user_counts = ratings.groupby("User_ID").size().reset_index(name="rating_count")
+    user_counts = user_counts.sort_values(by="rating_count", ascending=False)
+
+    return user_counts.iloc[0]["User_ID"]
+
+
 def get_user_ids():
     """
     Get all user IDs.
