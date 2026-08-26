@@ -3,128 +3,103 @@ content_based.py
 
 Content-Based Filtering module for the Book Recommendation System.
 
-This module recommends books based on their own features:
-- Genre, Author, Keywords, Description
-
+This module recommends books using TF-IDF and Cosine Similarity:
+- Combines Genre, Author, Keywords, and Description into a feature soup.
+- Computes similarity scores between books using TF-IDF vectors.
+- Evaluates recommendation performance using Precision, Recall, and F1 Score.
 """
 
-def _get_selected_book(books, selected_book_title):
+import numpy as np
+import pandas as pd
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+
+def _clean_text(value):
     """
-    Get the selected book information from the dataset.
-    Returns None if the book does not exist.
+    Clean text and handle missing values or 'Unknown' entries.
     """
-    matches = books[books["Title"] == selected_book_title]
+    if value is None:
+        return ""
+    if isinstance(value, float) and pd.isna(value):
+        return ""
 
-    if matches.empty:
-        return None
+    text = str(value).strip()
+    if text == "" or text.lower() == "unknown":
+        return ""
 
-    return matches.iloc[0]
+    return text.lower()
 
 
-def _extract_keywords(keywords_text):
+def build_feature_soup(books):
     """
-    Convert keywords text into a lowercase set for similarity comparison.
+    Combine Genre, Author, Keywords, and Description into one text representation.
     """
-    if not isinstance(keywords_text, str) or keywords_text.strip() == "" or keywords_text == "Unknown":
-        return set()
+    books = books.copy()
 
-    return set(word.strip().lower() for word in keywords_text.split(",") if word.strip())
+    genre = books["Genre"].apply(_clean_text)
+    author = books["Author"].apply(_clean_text)
+    keywords = books["Keywords"].apply(_clean_text)
+    description = books["Description"].apply(_clean_text)
+
+    # Combine all textual attributes together
+    books["feature_soup"] = (
+        (genre + " ") * 2
+        + (author + " ") * 2
+        + keywords + " "
+        + description
+    ).str.strip()
+
+    books["feature_soup"] = books["feature_soup"].replace("", "unknown")
+
+    return books
 
 
-def _extract_description_words(description_text):
+def build_tfidf_similarity_matrix(books):
     """
-    Convert description text into a set of words.
-    Basic cleaning is applied before comparison.
+    Transform feature text into TF-IDF vectors and calculate Cosine Similarity matrix.
     """
-    if not isinstance(description_text, str) or description_text.strip() == "" or description_text == "Unknown":
-        return set()
+    books_indexed = build_feature_soup(books).reset_index(drop=True)
 
-    words = description_text.lower().split()
-    words = [word.strip(".,!?;:\"'()") for word in words]
+    vectorizer = TfidfVectorizer(
+        stop_words="english",
+        min_df=1,
+    )
 
-    return set(word for word in words if len(word) > 3)
+    tfidf_matrix = vectorizer.fit_transform(books_indexed["feature_soup"])
+    similarity_matrix = cosine_similarity(tfidf_matrix, tfidf_matrix)
 
-
-def calculate_similarity(book_row, selected_genre, selected_author, selected_keywords, selected_desc_words):
-    """
-    Calculate similarity score between a book and the selected book.
-
-    The score is based on:
-    - Genre similarity (40%)
-    - Author similarity (30%)
-    - Keyword similarity (20%)
-    - Description similarity (10%)
-    """
-    score = 0.0
-
-    # Compare genre
-    if selected_genre != "Unknown" and book_row["Genre"] == selected_genre:
-        score += 0.4
-
-    # Compare author
-    if selected_author != "Unknown" and book_row["Author"] == selected_author:
-        score += 0.3
-
-    # Compare keyword similarity
-    book_keywords = _extract_keywords(book_row["Keywords"])
-    if selected_keywords and book_keywords:
-        overlap = selected_keywords.intersection(book_keywords)
-        union = selected_keywords.union(book_keywords)
-        if union:
-            score += 0.2 * (len(overlap) / len(union))
-
-    # Compare description similarity
-    book_desc_words = _extract_description_words(book_row["Description"])
-    if selected_desc_words and book_desc_words:
-        overlap = selected_desc_words.intersection(book_desc_words)
-        union = selected_desc_words.union(book_desc_words)
-        if union:
-            score += 0.1 * (len(overlap) / len(union))
-
-    return score
+    return books_indexed, similarity_matrix
 
 
 def get_content_scores(books, selected_book_title):
     """
-    Calculate similarity scores between the selected book
-    and all books in the dataset.
-
+    Calculate similarity scores between the selected book and all books in dataset.
     Returns ISBN and content score for each book.
     """
-    books = books.copy()
+    books_indexed, similarity_matrix = build_tfidf_similarity_matrix(books)
 
-    selected_book = _get_selected_book(books, selected_book_title)
+    matches = books_indexed.index[books_indexed["Title"] == selected_book_title]
 
-    # If the selected title cannot be found, give every book 0 score.
-    if selected_book is None:
-        books["content_score"] = 0.0
-        return books[["ISBN", "content_score"]]
+    # If the selected title cannot be found, give every book 0 score
+    if len(matches) == 0:
+        return pd.DataFrame({
+            "ISBN": books_indexed["ISBN"],
+            "content_score": 0.0
+        })
 
-    selected_genre = selected_book["Genre"]
-    selected_author = selected_book["Author"]
-    selected_keywords = _extract_keywords(selected_book["Keywords"])
-    selected_desc_words = _extract_description_words(selected_book["Description"])
+    selected_idx = matches[0]
+    scores = similarity_matrix[selected_idx]
 
-    content_scores = []
-
-    for _, book_row in books.iterrows():
-        score = calculate_similarity(
-            book_row,
-            selected_genre,
-            selected_author,
-            selected_keywords,
-            selected_desc_words,
-        )
-        content_scores.append(score)
-
-    books["content_score"] = content_scores
-
-    return books[["ISBN", "content_score"]]
+    return pd.DataFrame({
+        "ISBN": books_indexed["ISBN"],
+        "content_score": scores
+    })
 
 
 def get_similar_books(books, selected_book_title, top_n=10):
     """
-    Return the top similar books based on content similarity.
+    Return the top similar books based on TF-IDF content similarity.
     The selected book itself is removed from the result.
     """
     content_scores = get_content_scores(books, selected_book_title)
@@ -132,9 +107,8 @@ def get_similar_books(books, selected_book_title, top_n=10):
     result = books.merge(content_scores, on="ISBN", how="left")
     result["content_score"] = result["content_score"].fillna(0.0)
 
-    # Remove the selected book from recommendations.
+    # Remove the selected book from recommendations
     result = result[result["Title"] != selected_book_title]
-
     result = result.sort_values(by="content_score", ascending=False)
 
     return result[
@@ -142,8 +116,52 @@ def get_similar_books(books, selected_book_title, top_n=10):
     ].head(top_n)
 
 
+def evaluate_content_based(user_id, selected_book_title, ratings, books, top_n=10):
+    """
+    Evaluate Content-Based recommendations against a user's liked books (Rating >= 7).
+    Calculates Precision, Recall, and F1 Score.
+    """
+    user_ratings = ratings[ratings["User_ID"] == user_id]
+    liked_books = user_ratings[user_ratings["Rating"] >= 7]["ISBN"].tolist()
+
+    # Get recommended books
+    recommendations = get_similar_books(
+        books=books,
+        selected_book_title=selected_book_title,
+        top_n=top_n
+    )
+    recommended_books = recommendations["ISBN"].tolist()
+
+    # Calculate matches with user liked books
+    correct_recommendations = sum(
+        1 for isbn in recommended_books if isbn in liked_books
+    )
+
+    # Calculate metrics
+    precision = (
+        correct_recommendations / len(recommended_books)
+        if recommended_books else 0
+    )
+    recall = (
+        correct_recommendations / len(liked_books)
+        if liked_books else 0
+    )
+    f1_score = (
+        2 * precision * recall / (precision + recall)
+        if (precision + recall) > 0 else 0
+    )
+
+    return {
+        "precision": round(precision, 3),
+        "recall": round(recall, 3),
+        "f1_score": round(f1_score, 3),
+        "liked_books": len(liked_books),
+        "correct_recommendations": correct_recommendations,
+    }
+
+
 if __name__ == "__main__":
-    from data_loader import load_books
+    from data_loader import load_books, load_all_data
 
     books_df = load_books()
 
@@ -153,3 +171,10 @@ if __name__ == "__main__":
 
     similar_books = get_similar_books(books_df, sample_title, top_n=5)
     print(similar_books.to_string(index=False))
+    print()
+
+    all_books, users_df, ratings_df = load_all_data()
+    sample_user = users_df["User_ID"].iloc[0]
+
+    print("Evaluation for user", sample_user, "seed book:", sample_title)
+    print(evaluate_content_based(sample_user, sample_title, ratings_df, all_books, top_n=10))
