@@ -25,7 +25,10 @@ def create_user_item_matrix(ratings):
 
 
 def calculate_user_similarity(user_item_matrix):
-
+    """
+    Calculate similarity between users based on their ratings.
+    Returns a User × User similarity matrix.
+    """
     matrix = user_item_matrix.values.astype(float)
 
     # L2 norm (length) of each user's rating vector.
@@ -49,7 +52,9 @@ def calculate_user_similarity(user_item_matrix):
 
 
 def get_similar_users(similarity_df, user_id, top_n=5):
-
+    """
+    Find the most similar users to the selected user.
+    """
     if user_id not in similarity_df.index:
         return pd.Series(dtype=float)
 
