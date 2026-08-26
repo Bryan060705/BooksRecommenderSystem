@@ -3,16 +3,6 @@ collaborative.py
 
 Collaborative Filtering module for the Book Recommendation System.
 
-Method: User-Based Collaborative Filtering using Cosine Similarity
-        (weighted average across ALL users, not just top-K).
-
-Workflow:
-    User-Book Ratings
-        -> Create User-Item Matrix
-        -> Calculate Cosine Similarity between users
-        -> Use similarity as weights to predict a score for every book
-        -> Return collaborative_score (0 - 1 scale) for each ISBN
-
 This module is designed to stay compatible with hybrid.py:
     from collaborative import get_collaborative_score
     collaborative_scores = get_collaborative_score(ratings, user_id)
@@ -25,13 +15,7 @@ from data_loader import load_all_data
 
 
 def create_user_item_matrix(ratings):
-    """
-    Build a User x Book rating matrix.
 
-    Rows: User_ID
-    Columns: ISBN
-    Values: Rating (0 means the user has not rated that book)
-    """
     return ratings.pivot_table(
         index="User_ID",
         columns="ISBN",
@@ -41,15 +25,7 @@ def create_user_item_matrix(ratings):
 
 
 def calculate_user_similarity(user_item_matrix):
-    """
-    Calculate Cosine Similarity between every pair of users.
 
-    Cosine similarity compares the "shape" of two users' rating patterns,
-    regardless of how many books they rated.
-
-    Return:
-        A User x User similarity matrix (DataFrame), values between 0 and 1.
-    """
     matrix = user_item_matrix.values.astype(float)
 
     # L2 norm (length) of each user's rating vector.
@@ -73,12 +49,7 @@ def calculate_user_similarity(user_item_matrix):
 
 
 def get_similar_users(similarity_df, user_id, top_n=5):
-    """
-    Get the most similar users to the given user_id.
 
-    This is mainly used for explanation / presentation purposes,
-    e.g. showing "Users similar to you are: ...".
-    """
     if user_id not in similarity_df.index:
         return pd.Series(dtype=float)
 
@@ -89,21 +60,7 @@ def get_similar_users(similarity_df, user_id, top_n=5):
 
 
 def get_collaborative_score(ratings, user_id):
-    """
-    Calculate a collaborative filtering score for every book (ISBN),
-    based on the ratings of ALL other users, weighted by how similar
-    each user is to the selected user (Cosine Similarity).
 
-    For each book:
-        predicted_score = sum(similarity_i * rating_i) / sum(|similarity_i|)
-        (only counting users who actually rated that book)
-
-    The result is then scaled from a 1-10 rating range down to 0-1,
-    so it can be combined directly with content_score in hybrid.py.
-
-    Return:
-        DataFrame with columns: ISBN, collaborative_score
-    """
     user_item_matrix = create_user_item_matrix(ratings)
     all_isbns = user_item_matrix.columns
 
@@ -152,16 +109,7 @@ def get_collaborative_score(ratings, user_id):
 
 
 def collaborative_recommendation(user_id, top_n=10, remove_rated=True):
-    """
-    Recommend books to a user using pure Collaborative Filtering.
 
-    remove_rated:
-        True means books already rated by the user are excluded
-        from the recommendation list.
-
-    Return:
-        recommendation DataFrame sorted by collaborative_score.
-    """
     books, users, ratings = load_all_data()
 
     scores = get_collaborative_score(ratings, user_id)
@@ -200,13 +148,7 @@ def collaborative_recommendation(user_id, top_n=10, remove_rated=True):
 
 
 def evaluate_collaborative(user_id, top_n=10):
-    """
-    Evaluate the collaborative filtering recommender using
-    Precision, Recall and F1 score.
 
-    Books rated 7 or above by the user are treated as "liked" books,
-    same definition used in hybrid.py for consistency.
-    """
     books, users, ratings = load_all_data()
 
     user_ratings = ratings[ratings["User_ID"] == user_id]
