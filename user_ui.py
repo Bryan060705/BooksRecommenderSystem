@@ -15,9 +15,6 @@ ADMIN_PASSWORD = "admin123"
 VIEWS = ["Discover", "My shelf", "My ratings", "Profile"]
 MAX_BOOKS = 18
 
-st.set_page_config(page_title="Books For You", page_icon="📚", layout="wide")
-
-
 # --- DATA LOADING ---
 @st.cache_data(show_spinner=False)
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -96,6 +93,8 @@ div[data-testid="stTextInput"] input[aria-label="Search"] {
     padding-right: 45px !important;
     border: 1px solid #ccc !important;
     background-color: #fff !important;
+    color: var(--foreground) !important;
+    caret-color: var(--foreground) !important;
     height: 46px !important;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E") !important;
     background-repeat: no-repeat !important;
@@ -167,7 +166,6 @@ div[data-testid="stTextInput"] input[aria-label="Admin password"] {
 .login-art .quote { border-top:1px solid #ffffff33; margin-top:28px; padding-top:18px; font-style:italic; }
 </style>
 """
-st.markdown(CSS, unsafe_allow_html=True)
 
 
 # --- UI COMPONENTS ---
@@ -287,8 +285,68 @@ def book_grid(books: pd.DataFrame, ratings: pd.DataFrame, columns: int = 4) -> N
                 )
 
 
+# --- PERSONALIZED RECOMMENDATIONS ---
+@st.cache_data(show_spinner=False)
+def get_personalized_recommendations(user_id: str, top_n: int = 8) -> pd.DataFrame:
+    """
+    Call the personalized recommendation from the hybrid module and cache it.
+
+    Why cache: streamlit reruns the whole script every time the user
+    clicks a button or types a character. Without caching, recommendations
+    would be recomputed on every interaction, which is very slow.
+    """
+    from hybrid import personalized_recommendation
+
+    result = personalized_recommendation(user_id, top_n)
+
+    # The recommendation table comes from data_loader with raw types.
+    # Convert every column to string to match the book card format below,
+    # so the HTML rendering stays consistent.
+    for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
+        result[col] = result[col].astype(str)
+
+    # data_loader uses "Unknown" for empty values. Replace it with an
+    # empty string so cover_html shows a text cover instead of a broken image.
+    result["Image_URL"] = result["Image_URL"].replace("Unknown", "")
+
+    return result
+
+
+def recommendation_strip(ratings: pd.DataFrame) -> None:
+    """
+    Personalized recommendation strip: shown at the top of the Discover page.
+
+    Recommendation source:
+    - books rated >= 7 by the user are used as seeds (hybrid of content
+      score + collaborative filtering score)
+    - new users without rating history automatically fall back to the
+      popular books ranking
+    """
+    user = st.session_state.current_user
+    if not user:
+        return
+
+    user_id = user.get("User_ID", "")
+    if not user_id:
+        return
+
+    recommendations = get_personalized_recommendations(user_id)
+
+    if recommendations.empty:
+        return
+
+    st.markdown('<p class="eyebrow">PICKED FOR YOU</p>', unsafe_allow_html=True)
+    st.markdown('<h2 style="margin:0 0 6px">Recommended for you</h2>', unsafe_allow_html=True)
+
+    # Show only the top 8 books (2 rows) to keep the page from getting too long.
+    # Reuse the book_grid card style to display the recommendations.
+    book_grid(recommendations.head(8), ratings, columns=4)
+
+
 # --- MAIN APPLICATION ---
 def main() -> None:
+    st.markdown(CSS, unsafe_allow_html=True)
+
     books, users, ratings = load_data()
     st.session_state.setdefault("current_user", None)
     st.session_state.setdefault("error", "")
@@ -327,6 +385,12 @@ def main() -> None:
         st.markdown(f'<h1 class="hero-title">{title_text}</h1>', unsafe_allow_html=True)
 
     if view == "Discover":
+        # The personalized recommendation strip is shown at the very top
+        # (new users automatically fall back to the popular books ranking).
+        # It is hidden while the user is searching, so search results
+        # are not pushed down by the recommendations.
+        if not query:
+            recommendation_strip(ratings)
         featured_card(books, ratings)
 
     genre = st.selectbox("Genre", genre_options(books), label_visibility="collapsed")

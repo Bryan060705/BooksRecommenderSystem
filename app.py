@@ -2,7 +2,7 @@ import streamlit as st
 
 from collaborative import collaborative_recommendation, evaluate_collaborative
 from content_based import get_similar_books, evaluate_content_based
-from data_loader import load_books, load_all_data
+from data_loader import load_books, load_all_data, load_user_accounts
 from hybrid import (
     evaluate_hybrid,
     get_book_titles,
@@ -10,8 +10,6 @@ from hybrid import (
     get_default_user,
     hybrid_recommendation,
 )
-
-ADMIN_PASSWORD = "admin123"
 
 # Page configuration
 st.set_page_config(
@@ -70,7 +68,7 @@ def show_metrics_row(evaluation, container=st):
     m3.metric("F1 Score", evaluation["f1_score"])
     m4.metric("Correct Items", evaluation["correct_recommendations"])
 
-def login_screen(users):
+def login_screen(users, accounts):
     """The Login UI"""
     art, panel = st.columns([1, 1], gap="large")
     with art:
@@ -86,45 +84,58 @@ def login_screen(users):
         st.markdown('<p style="color:#9a9d94; font-size:10px; font-weight:700; letter-spacing:.14em;">MEMBER ACCESS</p>', unsafe_allow_html=True)
         st.markdown('<h2 style="margin-top:0">Welcome back.</h2>', unsafe_allow_html=True)
         
-        role = st.radio("Role", ["Reader", "Admin"], horizontal=True)
-        user_id = st.text_input("User_ID", placeholder="Admin use 'admin' / Readers use U0001")
-        
-        password = ""
-        if role == "Admin":
-            password = st.text_input("Admin password", type="password")
+        role = st.radio("Role", ["User", "Admin"], horizontal=True)
+        username = st.text_input("Username", placeholder="Example: user1 or admin")
+        password = st.text_input("Password", type="password")
 
-        if st.button("Login →", use_container_width=True):
-            clean_id = user_id.strip()
+        if st.button("Login", use_container_width=True):
+            username = username.strip()
+            password = password.strip()
 
-            # --- NEW ADMIN LOGIC ---
+            # Check username, password and role from UserAccounts.csv.
+            account = accounts[
+                (accounts["Username"] == username)
+                & (accounts["Password"] == password)
+                & (accounts["Role"] == role)
+            ]
+
+            if account.empty:
+                st.error("Invalid username, password or role.")
+                return
+
+            account = account.iloc[0]
+
             if role == "Admin":
-                if clean_id == "admin" and password == ADMIN_PASSWORD:
-                    # We create a 'dummy' user dictionary for admin since they aren't in the CSV
-                    st.session_state.current_user = {
-                        "User_ID": "admin", 
-                        "Location": "Internal", 
-                        "Age": "N/A"
-                    }
-                    st.session_state.role = "Admin"
-                    st.rerun()
-                else:
-                    st.error("Invalid Admin credentials. ID must be 'admin' and password correct.")
+                st.session_state.current_user = {
+                    "User_ID": account["User_ID"],
+                    "Username": account["Username"],
+                    "Location": "Internal",
+                    "Age": "N/A"
+                }
+                st.session_state.role = "Admin"
+                st.rerun()
 
-            # --- EXISTING READER LOGIC ---
             else:
-                match = users[users["User_ID"] == clean_id]
-                if match.empty:
-                    st.error("Reader User_ID not found in database.")
-                else:
-                    st.session_state.current_user = match.iloc[0].to_dict()
-                    st.session_state.role = "Reader"
-                    st.rerun()
+                # Link login account to the user profile in Users.csv.
+                user_profile = users[users["User_ID"] == account["User_ID"]]
+
+                if user_profile.empty:
+                    st.error("This account is not linked to a valid user profile.")
+                    return
+
+                profile = user_profile.iloc[0].to_dict()
+                profile["Username"] = account["Username"]
+
+                st.session_state.current_user = profile
+                st.session_state.role = "User"
+                st.rerun()
 
 # MAIN APPLICATION LOGIC
 
 def main():
     # Load dataset
     books_df, users_df, all_ratings = load_all_data()
+    accounts_df = load_user_accounts()
     
     # Initialize session state for login
     if "current_user" not in st.session_state:
@@ -132,19 +143,35 @@ def main():
 
     # 1. LOGIN GATE
     if st.session_state.current_user is None:
-        login_screen(users_df)
+        login_screen(users_df, accounts_df)
         return # Stop execution here until login
 
     # 2. IF LOGGED IN, SHOW THE APP
     current_user_id = st.session_state.current_user['User_ID']
     user_role = st.session_state.role
 
+    # Normal users use the separate user interface.
+    if user_role == "User":
+        from user_ui import main as user_main
+
+        user_main()
+        return
+
+    # Admin is not part of recommendation ratings.
+    # Therefore, admin uses the most active user as demo user.
+    if user_role == "Admin":
+        recommendation_user_id = get_default_user()
+    else:
+        recommendation_user_id = current_user_id
+
     # Sidebar: User Info and Logout
-    st.sidebar.title("📚 Books For You")
-    st.sidebar.write(f"**Member:** {current_user_id}")
+    st.sidebar.title("Books For You")
+    st.sidebar.write(f"**Username:** {st.session_state.current_user.get('Username', current_user_id)}")
+    st.sidebar.write(f"**User ID:** {current_user_id}")
     st.sidebar.write(f"**Role:** {user_role}")
     if st.sidebar.button("Sign Out"):
         st.session_state.current_user = None
+        st.session_state.role = None
         st.rerun()
     
     st.sidebar.divider()
@@ -156,6 +183,11 @@ def main():
     st.sidebar.metric("Total Users", summary["total_users"])
     st.sidebar.metric("Total Ratings", summary["total_ratings"])
     st.sidebar.metric("Average Rating", summary["average_rating"])
+
+    if user_role == "Admin":
+        st.sidebar.subheader("Admin View")
+        st.sidebar.write("Login Accounts:", len(accounts_df))
+        st.sidebar.write("Demo User for Recommendation:", recommendation_user_id)
 
     # Main UI Styling
     st.markdown(
@@ -193,8 +225,9 @@ def main():
 
     # Recommendation and evaluation logic
     if recommend_button:
-        # Use actual logged in user ID instead of default_user
-        uid = current_user_id 
+        # Normal users use their own User_ID.
+        # Admin uses a demo User_ID from the dataset.
+        uid = recommendation_user_id
 
         if recommendation_method == "Content-Based":
             recommendations = get_similar_books(load_books(), selected_book, top_n=top_n)

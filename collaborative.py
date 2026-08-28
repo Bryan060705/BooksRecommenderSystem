@@ -157,7 +157,7 @@ def evaluate_collaborative(user_id, top_n=10):
     books, users, ratings = load_all_data()
 
     user_ratings = ratings[ratings["User_ID"] == user_id]
-    liked_books = user_ratings[user_ratings["Rating"] >= 1]["ISBN"].tolist()
+    liked_books = user_ratings[user_ratings["Rating"] >= 7]["ISBN"].tolist()
 
     # Allow already-rated books back in so they can be compared
     # against the user's liked books.

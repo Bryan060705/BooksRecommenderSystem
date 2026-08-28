@@ -99,6 +99,26 @@ def load_ratings():
     return ratings
 
 
+def load_user_accounts():
+    """
+    Load UserAccounts.csv for login.
+
+    This file is separated from Users.csv because login data and
+    recommendation user profile data should not be mixed together.
+    """
+    accounts_path = os.path.join(DATASET_PATH, "UserAccounts.csv")
+    accounts = read_csv_file(accounts_path)
+
+    # Make sure all login values are treated as text.
+    accounts["Account_ID"] = accounts["Account_ID"].astype(str)
+    accounts["User_ID"] = accounts["User_ID"].astype(str)
+    accounts["Username"] = accounts["Username"].astype(str)
+    accounts["Password"] = accounts["Password"].astype(str)
+    accounts["Role"] = accounts["Role"].astype(str)
+
+    return accounts
+
+
 def load_all_data():
     """
     Load books, users and ratings together.
