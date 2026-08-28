@@ -259,7 +259,28 @@ def featured_card(books: pd.DataFrame, ratings: pd.DataFrame) -> None:
     )
 
 
-def book_grid(books: pd.DataFrame, ratings: pd.DataFrame, columns: int = 4) -> None:
+def book_grid(
+    books: pd.DataFrame,
+    ratings: pd.DataFrame,
+    columns: int = 4,
+    selectable: bool = False,
+    score_col: str | None = None,
+    user_rating_col: str | None = None,
+) -> None:
+    """
+    Render books as cards.
+
+    selectable: when True, each card gets a "Show similar books" button
+        that sets st.session_state.selected_book and reruns. Used on the
+        Discover grid so picking any book drives the "You May Also Like"
+        section further up the page.
+    score_col: optional column name (e.g. "Match_%") to render as a
+        "Match: NN%" line on the card. Used for the recommendation strips,
+        left off the plain Discover/My shelf/My ratings grids.
+    user_rating_col: optional column name (e.g. "Your_Rating") to render
+        as a "Your rating: N/10" line. Used on the My ratings view so it
+        shows the user's own score instead of just the community average.
+    """
     if books.empty:
         st.info("No matching books found.")
         return
@@ -283,6 +304,24 @@ def book_grid(books: pd.DataFrame, ratings: pd.DataFrame, columns: int = 4) -> N
                     </div>""",
                     unsafe_allow_html=True,
                 )
+                if score_col and score_col in book_data.index and str(book_data[score_col]) != "":
+                    st.markdown(
+                        f'<p class="muted" style="margin-top:4px">Match: {book_data[score_col]}%</p>',
+                        unsafe_allow_html=True,
+                    )
+                if (
+                    user_rating_col
+                    and user_rating_col in book_data.index
+                    and str(book_data[user_rating_col]) not in ("", "nan", "None")
+                ):
+                    st.markdown(
+                        f'<p class="muted" style="margin-top:4px">Your rating: {book_data[user_rating_col]}/10</p>',
+                        unsafe_allow_html=True,
+                    )
+                if selectable:
+                    if st.button("Show similar books", key=f"similar_{book_data['ISBN']}"):
+                        st.session_state.selected_book = book_data["Title"]
+                        st.rerun()
 
 
 # --- PERSONALIZED RECOMMENDATIONS ---
@@ -343,6 +382,105 @@ def recommendation_strip(ratings: pd.DataFrame) -> None:
     book_grid(recommendations.head(8), ratings, columns=4)
 
 
+# --- "YOU MAY ALSO LIKE" (book-triggered recommendations) ---
+@st.cache_data(show_spinner=False)
+def get_related_recommendations(user_id: str, selected_title: str, top_n: int = 8) -> pd.DataFrame:
+    """
+    Thin cached wrapper around hybrid.hybrid_recommendation() — the exact
+    same function app.py's Admin "Compare All 3" dashboard already calls.
+    No recommendation logic is duplicated here; this only reshapes the
+    result for the card renderer below.
+    """
+    from hybrid import hybrid_recommendation
+
+    result = hybrid_recommendation(user_id, selected_title, top_n=top_n, remove_rated=True)
+
+    for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
+        result[col] = result[col].astype(str)
+    result["Image_URL"] = result["Image_URL"].replace("Unknown", "")
+
+    # hybrid_score is a 0-1 blend of content_score and collaborative_score
+    # (both already 0-1), so it's safe to display as a 0-100% match.
+    result["Match_%"] = (result["hybrid_score"].clip(lower=0, upper=1) * 100).round().astype(int)
+
+    return result
+
+
+def related_recommendations(ratings: pd.DataFrame) -> None:
+    """
+    "You May Also Like" section: shown automatically once a book has been
+    selected (via search or the "Show similar books" button on a card).
+    Uses the current logged-in user's User_ID when available, so results
+    are personalized as well as book-related.
+    """
+    selected_title = st.session_state.get("selected_book")
+    if not selected_title:
+        return
+
+    user = st.session_state.get("current_user")
+    user_id = (user or {}).get("User_ID", "")
+
+    recommendations = get_related_recommendations(user_id, selected_title)
+
+    header, clear_col = st.columns([4, 1])
+    with header:
+        st.markdown('<p class="eyebrow">YOU MAY ALSO LIKE</p>', unsafe_allow_html=True)
+        st.markdown(
+            f'<h2 style="margin:0 0 6px">Because you viewed <em>{html.escape(selected_title)}</em></h2>',
+            unsafe_allow_html=True,
+        )
+    with clear_col:
+        st.write("")
+        if st.button("Clear", type="secondary"):
+            st.session_state.selected_book = None
+            st.rerun()
+
+    if recommendations.empty:
+        st.info("No related books found for this title.")
+        return
+
+    book_grid(recommendations.head(8), ratings, columns=4, score_col="Match_%")
+
+
+# --- PROFILE PAGE ---
+def profile_page(user: dict, ratings: pd.DataFrame, books: pd.DataFrame) -> None:
+    """
+    Profile view: account info + rating stats. Uses the .profile-card /
+    .profile-avatar styles that were already defined in the CSS above but
+    had no view actually rendering them.
+    """
+    user_id = user.get("User_ID", "")
+    initial = (user_id or "?")[:1].upper()
+    age = user.get("Age") or "—"
+    location = user.get("Location") or "Location unknown"
+
+    user_ratings = ratings.loc[ratings["User_ID"] == user_id]
+    rated_count = len(user_ratings)
+    avg_given = round(user_ratings["Rating_num"].mean(), 1) if rated_count else 0.0
+
+    st.markdown(
+        f"""
+        <div class="profile-card">
+          <div class="profile-avatar">{html.escape(initial)}</div>
+          <div>
+            <h2 style="margin:0 0 4px">{html.escape(user_id)}</h2>
+            <p class="muted" style="margin:0">{html.escape(str(location))} · Age {html.escape(str(age))}</p>
+            <p class="muted" style="margin:8px 0 0">{rated_count} books rated · average rating given {avg_given or "—"}</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if rated_count:
+        st.markdown('<p class="eyebrow" style="margin-top:26px">RECENTLY RATED</p>', unsafe_allow_html=True)
+        recent = user_ratings.tail(8)
+        recent_books = books[books["ISBN"].isin(recent["ISBN"])].merge(
+            recent[["ISBN", "Rating"]], on="ISBN", how="left"
+        ).rename(columns={"Rating": "Your_Rating"})
+        book_grid(recent_books, ratings, columns=4, user_rating_col="Your_Rating")
+
+
 # --- MAIN APPLICATION ---
 def main() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
@@ -350,6 +488,7 @@ def main() -> None:
     books, users, ratings = load_data()
     st.session_state.setdefault("current_user", None)
     st.session_state.setdefault("error", "")
+    st.session_state.setdefault("selected_book", None)
 
     if st.session_state.current_user is None:
         login_screen(users)
@@ -366,6 +505,14 @@ def main() -> None:
     with h_right:
         # LABEL MATCHES CSS: aria-label="Search"
         query = st.text_input("Search", placeholder="Search titles or authors...", label_visibility="collapsed")
+
+    # If the search box exactly matches one book's title, treat that as
+    # "selecting" the book and automatically drive the "You May Also Like"
+    # section below — no extra click needed.
+    if query and not books.empty:
+        exact = books.loc[books["Title"].str.lower() == query.strip().lower()]
+        if len(exact) == 1:
+            st.session_state.selected_book = exact.iloc[0]["Title"]
 
     # Sidebar
     with st.sidebar:
@@ -385,13 +532,23 @@ def main() -> None:
         st.markdown(f'<h1 class="hero-title">{title_text}</h1>', unsafe_allow_html=True)
 
     if view == "Discover":
-        # The personalized recommendation strip is shown at the very top
+        # "You May Also Like" is shown first when a book has been selected
+        # (via search or a "Show similar books" click), so it's the most
+        # prominent thing on the page right after picking a book.
+        related_recommendations(ratings)
+
+        # The personalized recommendation strip is shown next
         # (new users automatically fall back to the popular books ranking).
         # It is hidden while the user is searching, so search results
         # are not pushed down by the recommendations.
         if not query:
             recommendation_strip(ratings)
         featured_card(books, ratings)
+    elif view == "Profile":
+        # Profile has its own dedicated layout (account info + rating
+        # stats) rather than the shared search/genre book grid below.
+        profile_page(user, ratings, books)
+        return
 
     genre = st.selectbox("Genre", genre_options(books), label_visibility="collapsed")
     
@@ -404,9 +561,21 @@ def main() -> None:
         ]
     if genre != "All genres":
         visible = visible[visible["Genre"] == genre]
-    if view in ("My shelf", "My ratings"):
+
+    user_rating_col = None
+    if view == "My shelf":
+        # Books the user has interacted with, shown like any other grid
+        # (no personal-score overlay — that's what "My ratings" is for).
         visible = visible[visible["ISBN"].isin(rated_isbns)]
-    
+    elif view == "My ratings":
+        # Same underlying set of books as "My shelf", but each card shows
+        # the user's own given rating instead of just the community average.
+        visible = visible[visible["ISBN"].isin(rated_isbns)]
+        visible = visible.merge(
+            user_ratings[["ISBN", "Rating"]], on="ISBN", how="left"
+        ).rename(columns={"Rating": "Your_Rating"})
+        user_rating_col = "Your_Rating"
+
     final_visible = visible.head(MAX_BOOKS)
 
     with count_box:
@@ -416,7 +585,12 @@ def main() -> None:
             unsafe_allow_html=True,
         )
 
-    book_grid(final_visible, ratings)
+    book_grid(
+        final_visible,
+        ratings,
+        selectable=(view == "Discover"),
+        user_rating_col=user_rating_col,
+    )
 
 
 if __name__ == "__main__":
