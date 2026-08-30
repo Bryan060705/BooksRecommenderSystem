@@ -1,3 +1,15 @@
+"""
+hybrid.py
+
+Combines content-based and collaborative filtering scores into a single
+hybrid recommendation, plus a couple of dataset/user helper functions used
+by the Streamlit apps.
+
+Books are identified by ISBN everywhere (never Title, which is not unique).
+Unknown ISBNs/users raise ValueError instead of silently returning
+zero-score/meaningless rows.
+"""
+
 import pandas as pd
 
 from data_loader import load_all_data
@@ -24,7 +36,8 @@ def get_dataset_summary():
 
     return summary
 
-def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=True):
+
+def hybrid_recommendation(user_id, selected_book_isbn, top_n=10, remove_rated=True):
     """
     Recommend books using hybrid recommendation.
 
@@ -32,19 +45,30 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=T
     1. Content-based score
     2. Collaborative filtering score
 
+    selected_book_isbn: ISBN of the seed book (NOT Title).
+
     remove_rated:
         True means books already rated by the user will not be recommended.
+
+    Raises:
+        ValueError if selected_book_isbn or user_id do not exist in the
+        dataset, instead of silently returning meaningless zero-score rows.
 
     Return:
         recommendation dataframe
     """
-
     books, users, ratings = load_all_data()
+
+    if selected_book_isbn not in books["ISBN"].values:
+        raise ValueError(f"Book with ISBN '{selected_book_isbn}' was not found in the dataset.")
+
+    if user_id not in users["User_ID"].values:
+        raise ValueError(f"User '{user_id}' was not found in the dataset.")
 
     # Get content-based score from content_based.py
     content_scores = get_content_scores(
         books,
-        selected_book_title
+        selected_book_isbn
     )
 
     # Get collaborative filtering score
@@ -66,7 +90,6 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=T
         how="left"
     )
 
-    # Replace missing scores with 0
     recommendations["content_score"] = (
         recommendations["content_score"].fillna(0)
     )
@@ -75,13 +98,13 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=T
         recommendations["collaborative_score"].fillna(0)
     )
 
-    # Remove selected book itself
+    # Remove selected book itself, by ISBN (not Title -- a Title match
+    # would also remove other, different books that happen to share the name)
     recommendations = recommendations[
-        recommendations["Title"] != selected_book_title
+        recommendations["ISBN"] != selected_book_isbn
     ]
 
     if remove_rated:
-        # Remove books already rated by this user
         user_ratings = ratings[
             ratings["User_ID"] == user_id
         ]
@@ -100,13 +123,11 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=T
         recommendations["collaborative_score"] * 0.4
     )
 
-    # Sort highest score first
     recommendations = recommendations.sort_values(
         by="hybrid_score",
         ascending=False
     )
 
-    # Columns displayed in Streamlit
     recommendations = recommendations[
         [
             "ISBN",
@@ -124,34 +145,31 @@ def hybrid_recommendation(user_id, selected_book_title, top_n=10, remove_rated=T
 
     return recommendations.head(top_n)
 
-def evaluate_hybrid(user_id, selected_book_title, top_n=10):
+
+def evaluate_hybrid(user_id, selected_book_isbn, top_n=10):
     """
     Evaluate the hybrid recommender using Precision, Recall and F1 score.
 
-    In this simple evaluation:
-    - Books rated 7 or above by the user are treated as liked books.
-    - Recommended books are compared with the liked books.
+    selected_book_isbn: ISBN of the seed book (NOT Title).
+
+    Raises:
+        ValueError (via hybrid_recommendation) for an unknown user or book.
     """
     books, users, ratings = load_all_data()
 
-    # Find books that the user likes.
     user_ratings = ratings[ratings["User_ID"] == user_id]
     liked_books = user_ratings[user_ratings["Rating"] >= 7]["ISBN"].tolist()
 
-    # For evaluation, we allow already rated books to appear.
-    # This makes it possible to compare recommendations with user's liked books.
     recommendations = hybrid_recommendation(
         user_id=user_id,
-        selected_book_title=selected_book_title,
+        selected_book_isbn=selected_book_isbn,
         top_n=top_n,
         remove_rated=False
     )
 
     recommended_books = recommendations["ISBN"].tolist()
 
-    # Count how many recommended books are actually liked by the user.
     correct_recommendations = 0
-
     for isbn in recommended_books:
         if isbn in liked_books:
             correct_recommendations += 1
@@ -171,7 +189,7 @@ def evaluate_hybrid(user_id, selected_book_title, top_n=10):
     else:
         f1_score = 2 * precision * recall / (precision + recall)
 
-    evaluation_result = {
+    return {
         "precision": round(precision, 3),
         "recall": round(recall, 3),
         "f1_score": round(f1_score, 3),
@@ -179,17 +197,28 @@ def evaluate_hybrid(user_id, selected_book_title, top_n=10):
         "correct_recommendations": correct_recommendations
     }
 
-    return evaluation_result
-
 
 def get_book_titles():
     """
-    Get all book titles.
-
-    This function is useful for Streamlit selectbox.
+    Kept for backwards compatibility. Prefer get_book_options() for any
+    new selectbox, since plain Titles are not unique.
     """
     books, users, ratings = load_all_data()
     return books["Title"].tolist()
+
+
+def get_book_options():
+    """
+    Return a list of (ISBN, display_label) pairs, safe for a Streamlit
+    selectbox even when two books share the same Title.
+
+    Example label: "Isle of Dogs — Patricia Cornwell (1998)"
+    """
+    books, users, ratings = load_all_data()
+    return [
+        (row.ISBN, f"{row.Title} — {row.Author} ({row.Year})")
+        for row in books.itertuples()
+    ]
 
 
 def get_default_user():
@@ -220,40 +249,25 @@ def get_user_ids():
 def get_popular_books(top_n=10):
     """
     Popular books ranking (for new users with no rating history).
-
-    New users have no personal preference to compute, so we fall back to:
-    - books rated by many people
-    - books with a high average rating
-
-    Return:
-        The same table structure as personalized recommendations,
-        so the frontend can display it uniformly.
     """
     books, users, ratings = load_all_data()
 
-    # Count how many people rated each book and its average rating
     stats = ratings.groupby("ISBN").agg(
-        rating_count=("Rating", "size"),   # how many people rated this book
-        average_rating=("Rating", "mean")  # average rating of this book
+        rating_count=("Rating", "size"),
+        average_rating=("Rating", "mean")
     ).reset_index()
 
-    # Popularity = rating count x average rating (both matter together)
     stats["popularity_score"] = stats["rating_count"] * stats["average_rating"]
 
-    # Merge book details with the popularity score
     result = books.merge(stats, on="ISBN", how="left")
     result["popularity_score"] = result["popularity_score"].fillna(0)
 
-    # Keep the same columns as the other recommendation tables,
-    # so the frontend does not need a second set of code.
-    # hybrid_score is normalised to 0~1 by rank, for display only.
     result["content_score"] = 0.0
     result["collaborative_score"] = 0.0
     result["hybrid_score"] = (
         result["popularity_score"].rank(ascending=False) / len(result)
     )
 
-    # Sort from most popular to least popular, keep the top top_n books
     result = result.sort_values(by="popularity_score", ascending=False)
 
     return result[
@@ -276,40 +290,35 @@ def personalized_recommendation(user_id, top_n=10):
     """
     Personalized recommendation: recommend books for a logged-in user.
 
-    How it works:
     1. Find the books the user rated >= 7 (the books the user likes).
     2. Use them as "seeds", compute content similarity, then average them
-       into a content score (recommends books similar in style to what
-       the user already likes).
-    3. Add the collaborative filtering score (what similar users think).
+       into a content score.
+    3. Add the collaborative filtering score.
     4. Hybrid score = 0.6 * content score + 0.4 * collaborative score.
     5. If the user has no liked books, fall back to the popular ranking.
 
-    Return:
-        A dataframe of recommended books (with content_score /
-        collaborative_score / hybrid_score columns).
+    Raises:
+        ValueError if user_id does not exist in the dataset at all. A
+        valid user with zero liked books is NOT an error -- they fall
+        back to get_popular_books().
     """
     books, users, ratings = load_all_data()
 
-    # ---- 1. Find the books the user likes ----
+    if user_id not in users["User_ID"].values:
+        raise ValueError(f"User '{user_id}' was not found in the dataset.")
+
     user_ratings = ratings[ratings["User_ID"] == user_id]
     liked_books = user_ratings[user_ratings["Rating"] >= 7]["ISBN"].tolist()
 
-    # ---- 2. New user without liked books -> use the popular ranking ----
     if len(liked_books) == 0:
         return get_popular_books(top_n)
 
-    # ---- 3. Content score: average the similarity of every liked book ----
     content_score_list = []
 
     for isbn in liked_books:
-        # Find the title from the ISBN (content_based uses the title as input)
-        title_list = books[books["ISBN"] == isbn]["Title"].tolist()
-        if len(title_list) == 0:
-            continue
-
-        # Get the scores of all books similar to that seed book
-        seed_scores = get_content_scores(books, title_list[0])
+        # get_content_scores now takes an ISBN directly -- no need to look
+        # up a Title first.
+        seed_scores = get_content_scores(books, isbn)
         content_score_list.append(seed_scores)
 
     if len(content_score_list) == 0:
@@ -318,16 +327,13 @@ def personalized_recommendation(user_id, top_n=10):
             "content_score": 0.0
         })
     else:
-        # Add up all the scores, then divide by the count = average score
-        content_scores = content_score_list[0]
+        content_scores = content_score_list[0].copy()
         for next_scores in content_score_list[1:]:
             content_scores["content_score"] += next_scores["content_score"]
         content_scores["content_score"] /= len(content_score_list)
 
-    # ---- 4. Collaborative filtering score ----
     collaborative_scores = get_collaborative_score(ratings, user_id)
 
-    # ---- 5. Merge both scores and calculate the hybrid score ----
     recommendations = books.merge(content_scores, on="ISBN", how="left")
     recommendations = recommendations.merge(collaborative_scores, on="ISBN", how="left")
 
@@ -342,12 +348,10 @@ def personalized_recommendation(user_id, top_n=10):
         + recommendations["collaborative_score"] * 0.4
     )
 
-    # ---- 6. Remove books the user has already rated ----
     recommendations = recommendations[
         ~recommendations["ISBN"].isin(user_ratings["ISBN"])
     ]
 
-    # ---- 7. Sort from highest to lowest score, keep the top top_n books ----
     recommendations = recommendations.sort_values(
         by="hybrid_score",
         ascending=False
@@ -369,18 +373,21 @@ def personalized_recommendation(user_id, top_n=10):
     ].head(top_n)
 
 
-# Directly running this file runs a simple self-test
 if __name__ == "__main__":
+    from data_loader import load_books
+
+    books_df = load_books()
+    sample_isbn = books_df["ISBN"].iloc[0]
+
     print("=== Hybrid recommendation demo ===")
     result = hybrid_recommendation(
         user_id="U0001",
-        selected_book_title="Classical Mythology",
+        selected_book_isbn=sample_isbn,
         top_n=10
     )
     print(result.to_string(index=False))
     print()
 
-    # Use the most active user as the demo user (more ratings = clearer effect)
     sample_user = get_default_user()
     print("Selected user:", sample_user)
     print()

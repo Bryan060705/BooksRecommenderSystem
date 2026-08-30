@@ -65,11 +65,18 @@ def get_similar_users(similarity_df, user_id, top_n=5):
 
 
 def get_collaborative_score(ratings, user_id):
-
+    """
+    NOTE: This intentionally does NOT raise for an unknown user_id -- it
+    returns an all-zero score instead. That's correct behaviour for a REAL
+    user who simply has no rating history yet (new user fallback). Callers
+    that need to distinguish "no ratings" from "user does not exist at
+    all" should validate user_id against the Users table themselves before
+    calling this (see collaborative_recommendation / evaluate_collaborative
+    below, and hybrid.py).
+    """
     user_item_matrix = create_user_item_matrix(ratings)
     all_isbns = user_item_matrix.columns
 
-    # Unknown / new user with no rating history -> no collaborative signal.
     if user_id not in user_item_matrix.index:
         return pd.DataFrame({
             "ISBN": all_isbns,
@@ -78,7 +85,6 @@ def get_collaborative_score(ratings, user_id):
 
     similarity_df = calculate_user_similarity(user_item_matrix)
 
-    # Similarity of every other user to the selected user.
     similarities = similarity_df.loc[user_id].drop(user_id, errors="ignore")
 
     other_users_matrix = user_item_matrix.drop(index=user_id)
@@ -87,16 +93,13 @@ def get_collaborative_score(ratings, user_id):
     ratings_matrix = other_users_matrix.values
 
     # A rating of 0 means "not rated", so it should not count towards the
-    # weighted average at all (not even with weight 0 contributing to a
-    # rating of 0 - it must be excluded from BOTH the numerator and the
-    # denominator).
+    # weighted average at all (excluded from BOTH numerator and denominator).
     rated_mask = ratings_matrix > 0
     effective_weights = rated_mask * weights
 
     weighted_sum = (ratings_matrix * effective_weights).sum(axis=0)
     weight_total = np.abs(effective_weights).sum(axis=0)
 
-    # Avoid division by zero for books nobody similar has rated.
     weight_total_safe = np.where(weight_total == 0, 1e-8, weight_total)
 
     predicted_rating = weighted_sum / weight_total_safe
@@ -104,7 +107,6 @@ def get_collaborative_score(ratings, user_id):
     # Books with zero total weight truly have no signal -> force score to 0.
     predicted_rating = np.where(weight_total == 0, 0.0, predicted_rating)
 
-    # Scale from 1-10 rating range to 0-1 score range.
     collaborative_score = predicted_rating / 10
 
     return pd.DataFrame({
@@ -114,8 +116,16 @@ def get_collaborative_score(ratings, user_id):
 
 
 def collaborative_recommendation(user_id, top_n=10, remove_rated=True):
-
+    """
+    Raises:
+        ValueError if user_id does not exist in Users.csv at all. A valid
+        user with zero ratings is NOT an error -- they simply get all-zero
+        collaborative scores (handled inside get_collaborative_score).
+    """
     books, users, ratings = load_all_data()
+
+    if user_id not in users["User_ID"].values:
+        raise ValueError(f"User '{user_id}' was not found in the dataset.")
 
     scores = get_collaborative_score(ratings, user_id)
 
@@ -153,14 +163,16 @@ def collaborative_recommendation(user_id, top_n=10, remove_rated=True):
 
 
 def evaluate_collaborative(user_id, top_n=10):
-
+    """
+    Raises:
+        ValueError (via collaborative_recommendation) if user_id does not
+        exist in Users.csv.
+    """
     books, users, ratings = load_all_data()
 
     user_ratings = ratings[ratings["User_ID"] == user_id]
     liked_books = user_ratings[user_ratings["Rating"] >= 7]["ISBN"].tolist()
 
-    # Allow already-rated books back in so they can be compared
-    # against the user's liked books.
     recommendations = collaborative_recommendation(
         user_id=user_id,
         top_n=top_n,

@@ -20,12 +20,10 @@ MAX_BOOKS = 18
 def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Read CSVs with robust encoding detection."""
     def read(name: str) -> pd.DataFrame:
-        # Check if file exists to prevent crash
         path = DATA_DIR / name
         if not path.exists():
-            # Fallback for demo purposes if files aren't in /Dataset
             return pd.DataFrame(columns=["ISBN", "Title", "Author", "Genre", "Year", "User_ID", "Rating"])
-            
+
         for encoding in ("utf-8-sig", "cp1252", "latin-1"):
             try:
                 df = pd.read_csv(path, dtype=str, encoding=encoding).fillna("")
@@ -34,7 +32,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
                 continue
         else:
             raise ValueError(f"Could not decode {name}")
-        
+
         df.columns = [c.lstrip("\ufeff").strip() for c in df.columns]
         for col in df.columns:
             df[col] = df[col].astype(str).str.strip()
@@ -43,7 +41,7 @@ def load_data() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     books = read("Books.csv")
     users = read("Users.csv")
     ratings = read("Ratings.csv")
-    
+
     ratings["Rating_num"] = pd.to_numeric(ratings["Rating"], errors="coerce").fillna(0)
     return books, users, ratings
 
@@ -69,11 +67,9 @@ CSS = """
 
 .stApp { background: var(--background); color: var(--foreground); }
 
-/* Sidebar Styling */
 [data-testid="stSidebar"] { background: var(--paper); border-right: 1px solid var(--line); }
 [data-testid="stSidebar"] * { color: var(--foreground); }
 
-/* Typography */
 h1, h2, h3 { font-family: Georgia, serif !important; letter-spacing: -.02em; }
 .eyebrow { color:#9a9d94; font-size:10px; font-weight:700; letter-spacing:.14em; margin:0 0 6px; }
 .hero-title { font:400 46px Georgia, serif; margin:0 0 6px; line-height:1.05; }
@@ -81,12 +77,8 @@ h1, h2, h3 { font-family: Georgia, serif !important; letter-spacing: -.02em; }
 .muted { color: var(--muted); font-size:13px; }
 .count strong { font:34px Georgia, serif; }
 
-/* Global Header Logo */
 .header-logo { font-family: Georgia, serif; font-size: 28px; color: var(--olive); padding-top: 10px; }
 
-/* --- SPECIFIC INPUT STYLING --- */
-
-/* 1. The Global Search Bar (Pill Shape) */
 div[data-testid="stTextInput"] input[aria-label="Search"] {
     border-radius: 30px !important;
     padding-left: 20px !important;
@@ -102,7 +94,6 @@ div[data-testid="stTextInput"] input[aria-label="Search"] {
     background-size: 18px !important;
 }
 
-/* 2. Login & Admin inputs (Standard Shape) - Resets the pill styling */
 div[data-testid="stTextInput"] input[aria-label="User_ID"], 
 div[data-testid="stTextInput"] input[aria-label="Admin password"] {
     border-radius: 4px !important;
@@ -111,7 +102,6 @@ div[data-testid="stTextInput"] input[aria-label="Admin password"] {
     height: 42px !important;
 }
 
-/* UI Elements */
 .stButton > button { 
     border:1px solid var(--olive); background: var(--olive); color:#fff;
     border-radius:4px; padding:.6rem 1rem; font-size:13px; width:100%; 
@@ -119,7 +109,6 @@ div[data-testid="stTextInput"] input[aria-label="Admin password"] {
 .stButton > button:hover { background:#465239; border-color:#465239; color:#fff; }
 .stButton > button[kind="secondary"] { background:transparent; color: var(--olive); border-color: var(--line); }
 
-/* Featured Card */
 .featured { 
     background: var(--olive); color:#fff; border-radius:3px; padding:28px 32px;
     position:relative; overflow:hidden; display:flex; gap:28px; margin-bottom: 30px; 
@@ -134,7 +123,6 @@ div[data-testid="stTextInput"] input[aria-label="Admin password"] {
 .featured .meta { display:flex; gap:22px; font-size:11px; margin-top:18px; color:#e6ebdf; }
 .featured .num { position:absolute; right:24px; top:14px; font:70px Georgia, serif; color:#ffffff1a; }
 
-/* Book Covers */
 .cover { 
     width:100%; height:235px; border-radius:2px; overflow:hidden; display:flex;
     flex-direction:column; align-items:center; justify-content:center; text-align:center;
@@ -145,7 +133,6 @@ div[data-testid="stTextInput"] input[aria-label="Admin password"] {
 .cover span { font:16px Georgia, serif; line-height:1.15; }
 .cover small { font-size:9px; margin-top:8px; opacity:.8; }
 
-/* Book Info */
 .book-genre { color: var(--rust); text-transform:uppercase; letter-spacing:.12em; font-size:9px; font-weight:700; }
 .book-info h3 { font:17px Georgia, serif; line-height:1.15; margin:7px 0 5px; }
 .book-info p { color: var(--muted); font-size:11px; margin:0; }
@@ -155,11 +142,9 @@ div[data-testid="stTextInput"] input[aria-label="Admin password"] {
 }
 .book-meta .rate { color: var(--rust); }
 
-/* Profile Page */
 .profile-card { display:flex; align-items:center; gap:22px; border:1px solid var(--line); background: var(--paper); padding:26px; }
 .profile-avatar { width:70px; height:70px; display:grid; place-items:center; border-radius:50%; background: var(--olive); color:#fff; font:24px Georgia, serif; }
 
-/* Login Art */
 .login-art { background: var(--olive); color:#f7f5ee; border-radius:3px; padding:48px 40px; }
 .login-art h1 { color:#fff !important; font:400 42px Georgia, serif; margin:6px 0 18px; }
 .login-art p { color:#dbe1d3; font-size:13px; line-height:1.6; }
@@ -219,15 +204,13 @@ def login_screen(users: pd.DataFrame) -> None:
         st.markdown('<p class="eyebrow">MEMBER ACCESS</p>', unsafe_allow_html=True)
         st.markdown('<h2 style="margin-top:0">Welcome back.</h2>', unsafe_allow_html=True)
         role = st.radio("Role", ["Reader", "Admin"], horizontal=True, label_visibility="collapsed")
-        
-        # LABEL MATCHES CSS: aria-label="User_ID"
+
         user_id = st.text_input("User_ID", placeholder="e.g. U0001")
-        
+
         password = ""
         if role == "Admin":
-            # LABEL MATCHES CSS: aria-label="Admin password"
             password = st.text_input("Admin password", type="password")
-            
+
         if st.session_state.get("error"):
             st.error(st.session_state.error)
         if st.button("Login →"):
@@ -271,15 +254,7 @@ def book_grid(
     Render books as cards.
 
     selectable: when True, each card gets a "Show similar books" button
-        that sets st.session_state.selected_book and reruns. Used on the
-        Discover grid so picking any book drives the "You May Also Like"
-        section further up the page.
-    score_col: optional column name (e.g. "Match_%") to render as a
-        "Match: NN%" line on the card. Used for the recommendation strips,
-        left off the plain Discover/My shelf/My ratings grids.
-    user_rating_col: optional column name (e.g. "Your_Rating") to render
-        as a "Your rating: N/10" line. Used on the My ratings view so it
-        shows the user's own score instead of just the community average.
+        that sets st.session_state.selected_book (an ISBN) and reruns.
     """
     if books.empty:
         st.info("No matching books found.")
@@ -320,32 +295,22 @@ def book_grid(
                     )
                 if selectable:
                     if st.button("Show similar books", key=f"similar_{book_data['ISBN']}"):
-                        st.session_state.selected_book = book_data["Title"]
+                        # Store the ISBN, not the Title -- Titles can repeat
+                        # across different books.
+                        st.session_state.selected_book = book_data["ISBN"]
                         st.rerun()
 
 
 # --- PERSONALIZED RECOMMENDATIONS ---
 @st.cache_data(show_spinner=False)
 def get_personalized_recommendations(user_id: str, top_n: int = 8) -> pd.DataFrame:
-    """
-    Call the personalized recommendation from the hybrid module and cache it.
-
-    Why cache: streamlit reruns the whole script every time the user
-    clicks a button or types a character. Without caching, recommendations
-    would be recomputed on every interaction, which is very slow.
-    """
     from hybrid import personalized_recommendation
 
     result = personalized_recommendation(user_id, top_n)
 
-    # The recommendation table comes from data_loader with raw types.
-    # Convert every column to string to match the book card format below,
-    # so the HTML rendering stays consistent.
     for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
         result[col] = result[col].astype(str)
 
-    # data_loader uses "Unknown" for empty values. Replace it with an
-    # empty string so cover_html shows a text cover instead of a broken image.
     result["Image_URL"] = result["Image_URL"].replace("Unknown", "")
 
     return result
@@ -354,12 +319,6 @@ def get_personalized_recommendations(user_id: str, top_n: int = 8) -> pd.DataFra
 def recommendation_strip(ratings: pd.DataFrame) -> None:
     """
     Personalized recommendation strip: shown at the top of the Discover page.
-
-    Recommendation source:
-    - books rated >= 7 by the user are used as seeds (hybrid of content
-      score + collaborative filtering score)
-    - new users without rating history automatically fall back to the
-      popular books ranking
     """
     user = st.session_state.current_user
     if not user:
@@ -369,7 +328,12 @@ def recommendation_strip(ratings: pd.DataFrame) -> None:
     if not user_id:
         return
 
-    recommendations = get_personalized_recommendations(user_id)
+    try:
+        recommendations = get_personalized_recommendations(user_id)
+    except ValueError:
+        # user_id somehow doesn't exist in the recommender's own dataset
+        # copy -- fail quietly here rather than crash the whole page.
+        return
 
     if recommendations.empty:
         return
@@ -377,50 +341,50 @@ def recommendation_strip(ratings: pd.DataFrame) -> None:
     st.markdown('<p class="eyebrow">PICKED FOR YOU</p>', unsafe_allow_html=True)
     st.markdown('<h2 style="margin:0 0 6px">Recommended for you</h2>', unsafe_allow_html=True)
 
-    # Show only the top 8 books (2 rows) to keep the page from getting too long.
-    # Reuse the book_grid card style to display the recommendations.
     book_grid(recommendations.head(8), ratings, columns=4)
 
 
 # --- "YOU MAY ALSO LIKE" (book-triggered recommendations) ---
 @st.cache_data(show_spinner=False)
-def get_related_recommendations(user_id: str, selected_title: str, top_n: int = 8) -> pd.DataFrame:
+def get_related_recommendations(user_id: str, selected_isbn: str, top_n: int = 8) -> pd.DataFrame:
     """
-    Thin cached wrapper around hybrid.hybrid_recommendation() — the exact
-    same function app.py's Admin "Compare All 3" dashboard already calls.
-    No recommendation logic is duplicated here; this only reshapes the
-    result for the card renderer below.
+    Thin cached wrapper around hybrid.hybrid_recommendation().
+    selected_isbn: ISBN of the seed book (not Title).
     """
     from hybrid import hybrid_recommendation
 
-    result = hybrid_recommendation(user_id, selected_title, top_n=top_n, remove_rated=True)
+    result = hybrid_recommendation(user_id, selected_isbn, top_n=top_n, remove_rated=True)
 
     for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
         result[col] = result[col].astype(str)
     result["Image_URL"] = result["Image_URL"].replace("Unknown", "")
 
-    # hybrid_score is a 0-1 blend of content_score and collaborative_score
-    # (both already 0-1), so it's safe to display as a 0-100% match.
     result["Match_%"] = (result["hybrid_score"].clip(lower=0, upper=1) * 100).round().astype(int)
 
     return result
 
 
-def related_recommendations(ratings: pd.DataFrame) -> None:
+def related_recommendations(books: pd.DataFrame, ratings: pd.DataFrame) -> None:
     """
-    "You May Also Like" section: shown automatically once a book has been
-    selected (via search or the "Show similar books" button on a card).
-    Uses the current logged-in user's User_ID when available, so results
-    are personalized as well as book-related.
+    "You May Also Like" section: shown once a book has been selected (via
+    search or the "Show similar books" button on a card).
+
+    st.session_state.selected_book holds an ISBN, not a Title -- the
+    Title shown in the header is looked up from that ISBN.
     """
-    selected_title = st.session_state.get("selected_book")
-    if not selected_title:
+    selected_isbn = st.session_state.get("selected_book")
+    if not selected_isbn:
         return
+
+    book_row = books.loc[books["ISBN"] == selected_isbn]
+    if book_row.empty:
+        # Stale/invalid selection -- clear it instead of showing a broken header.
+        st.session_state.selected_book = None
+        return
+    selected_title = book_row.iloc[0]["Title"]
 
     user = st.session_state.get("current_user")
     user_id = (user or {}).get("User_ID", "")
-
-    recommendations = get_related_recommendations(user_id, selected_title)
 
     header, clear_col = st.columns([4, 1])
     with header:
@@ -435,6 +399,12 @@ def related_recommendations(ratings: pd.DataFrame) -> None:
             st.session_state.selected_book = None
             st.rerun()
 
+    try:
+        recommendations = get_related_recommendations(user_id, selected_isbn)
+    except ValueError as e:
+        st.error(str(e))
+        return
+
     if recommendations.empty:
         st.info("No related books found for this title.")
         return
@@ -444,11 +414,6 @@ def related_recommendations(ratings: pd.DataFrame) -> None:
 
 # --- PROFILE PAGE ---
 def profile_page(user: dict, ratings: pd.DataFrame, books: pd.DataFrame) -> None:
-    """
-    Profile view: account info + rating stats. Uses the .profile-card /
-    .profile-avatar styles that were already defined in the CSS above but
-    had no view actually rendering them.
-    """
     user_id = user.get("User_ID", "")
     initial = (user_id or "?")[:1].upper()
     age = user.get("Age") or "—"
@@ -503,16 +468,17 @@ def main() -> None:
     with h_left:
         st.markdown('<div class="header-logo">📚 Books For You</div>', unsafe_allow_html=True)
     with h_right:
-        # LABEL MATCHES CSS: aria-label="Search"
         query = st.text_input("Search", placeholder="Search titles or authors...", label_visibility="collapsed")
 
-    # If the search box exactly matches one book's title, treat that as
-    # "selecting" the book and automatically drive the "You May Also Like"
-    # section below — no extra click needed.
+    # If the search box exactly matches exactly ONE book's title, treat
+    # that as "selecting" the book. If the title is ambiguous (matches
+    # more than one book), we deliberately do NOT guess which one --
+    # the user can still click "Show similar books" on the exact card
+    # they mean from the grid below.
     if query and not books.empty:
         exact = books.loc[books["Title"].str.lower() == query.strip().lower()]
         if len(exact) == 1:
-            st.session_state.selected_book = exact.iloc[0]["Title"]
+            st.session_state.selected_book = exact.iloc[0]["ISBN"]
 
     # Sidebar
     with st.sidebar:
@@ -532,31 +498,21 @@ def main() -> None:
         st.markdown(f'<h1 class="hero-title">{title_text}</h1>', unsafe_allow_html=True)
 
     if view == "Discover":
-        # "You May Also Like" is shown first when a book has been selected
-        # (via search or a "Show similar books" click), so it's the most
-        # prominent thing on the page right after picking a book.
-        related_recommendations(ratings)
+        related_recommendations(books, ratings)
 
-        # The personalized recommendation strip is shown next
-        # (new users automatically fall back to the popular books ranking).
-        # It is hidden while the user is searching, so search results
-        # are not pushed down by the recommendations.
         if not query:
             recommendation_strip(ratings)
         featured_card(books, ratings)
     elif view == "Profile":
-        # Profile has its own dedicated layout (account info + rating
-        # stats) rather than the shared search/genre book grid below.
         profile_page(user, ratings, books)
         return
 
     genre = st.selectbox("Genre", genre_options(books), label_visibility="collapsed")
-    
-    # Filter Logic
+
     visible = books.copy()
     if query:
         visible = visible[
-            (visible["Title"].str.lower().str.contains(query.lower(), regex=False)) | 
+            (visible["Title"].str.lower().str.contains(query.lower(), regex=False)) |
             (visible["Author"].str.lower().str.contains(query.lower(), regex=False))
         ]
     if genre != "All genres":
@@ -564,12 +520,8 @@ def main() -> None:
 
     user_rating_col = None
     if view == "My shelf":
-        # Books the user has interacted with, shown like any other grid
-        # (no personal-score overlay — that's what "My ratings" is for).
         visible = visible[visible["ISBN"].isin(rated_isbns)]
     elif view == "My ratings":
-        # Same underlying set of books as "My shelf", but each card shows
-        # the user's own given rating instead of just the community average.
         visible = visible[visible["ISBN"].isin(rated_isbns)]
         visible = visible.merge(
             user_ratings[["ISBN", "Rating"]], on="ISBN", how="left"

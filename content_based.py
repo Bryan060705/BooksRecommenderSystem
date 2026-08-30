@@ -7,6 +7,10 @@ This module recommends books using TF-IDF and Cosine Similarity:
 - Combines Genre, Author, Keywords, and Description into a feature soup.
 - Computes similarity scores between books using TF-IDF vectors.
 - Evaluates recommendation performance using Precision, Recall, and F1 Score.
+
+IMPORTANT: Books are identified by ISBN everywhere in this module, never by
+Title. Multiple books can share the same Title (e.g. two different authors
+both have a book called "Isle of Dogs"), so Title alone is not a safe key.
 """
 
 import numpy as np
@@ -72,21 +76,23 @@ def build_tfidf_similarity_matrix(books):
     return books_indexed, similarity_matrix
 
 
-def get_content_scores(books, selected_book_title):
+def get_content_scores(books, selected_book_isbn):
     """
     Calculate similarity scores between the selected book and all books in dataset.
     Returns ISBN and content score for each book.
+
+    selected_book_isbn: ISBN of the seed book. ISBN is used instead of Title
+    because Titles are not guaranteed to be unique in the dataset.
+
+    Raises:
+        ValueError if selected_book_isbn does not exist in `books`.
     """
     books_indexed, similarity_matrix = build_tfidf_similarity_matrix(books)
 
-    matches = books_indexed.index[books_indexed["Title"] == selected_book_title]
+    matches = books_indexed.index[books_indexed["ISBN"] == selected_book_isbn]
 
-    # If the selected title cannot be found, give every book 0 score
     if len(matches) == 0:
-        return pd.DataFrame({
-            "ISBN": books_indexed["ISBN"],
-            "content_score": 0.0
-        })
+        raise ValueError(f"Book with ISBN '{selected_book_isbn}' was not found in the dataset.")
 
     selected_idx = matches[0]
     scores = similarity_matrix[selected_idx]
@@ -97,18 +103,20 @@ def get_content_scores(books, selected_book_title):
     })
 
 
-def get_similar_books(books, selected_book_title, top_n=10):
+def get_similar_books(books, selected_book_isbn, top_n=10):
     """
     Return the top similar books based on TF-IDF content similarity.
-    The selected book itself is removed from the result.
+    The selected book itself is removed from the result (matched by ISBN,
+    so books that merely share the same Title as the seed are NOT removed
+    by mistake).
     """
-    content_scores = get_content_scores(books, selected_book_title)
+    content_scores = get_content_scores(books, selected_book_isbn)
 
     result = books.merge(content_scores, on="ISBN", how="left")
     result["content_score"] = result["content_score"].fillna(0.0)
 
-    # Remove the selected book from recommendations
-    result = result[result["Title"] != selected_book_title]
+    # Remove the selected book by ISBN, not by Title.
+    result = result[result["ISBN"] != selected_book_isbn]
     result = result.sort_values(by="content_score", ascending=False)
 
     return result[
@@ -116,7 +124,7 @@ def get_similar_books(books, selected_book_title, top_n=10):
     ].head(top_n)
 
 
-def evaluate_content_based(user_id, selected_book_title, ratings, books, top_n=10):
+def evaluate_content_based(user_id, selected_book_isbn, ratings, books, top_n=10):
     """
     Evaluate Content-Based recommendations against a user's liked books (Rating >= 7).
     Calculates Precision, Recall, and F1 Score.
@@ -124,20 +132,17 @@ def evaluate_content_based(user_id, selected_book_title, ratings, books, top_n=1
     user_ratings = ratings[ratings["User_ID"] == user_id]
     liked_books = user_ratings[user_ratings["Rating"] >= 7]["ISBN"].tolist()
 
-    # Get recommended books
     recommendations = get_similar_books(
         books=books,
-        selected_book_title=selected_book_title,
+        selected_book_isbn=selected_book_isbn,
         top_n=top_n
     )
     recommended_books = recommendations["ISBN"].tolist()
 
-    # Calculate matches with user liked books
     correct_recommendations = sum(
         1 for isbn in recommended_books if isbn in liked_books
     )
 
-    # Calculate metrics
     precision = (
         correct_recommendations / len(recommended_books)
         if recommended_books else 0
@@ -165,11 +170,12 @@ if __name__ == "__main__":
 
     books_df = load_books()
 
+    sample_isbn = books_df["ISBN"].iloc[0]
     sample_title = books_df["Title"].iloc[0]
-    print("Selected book:", sample_title)
+    print("Selected book:", sample_title, "| ISBN:", sample_isbn)
     print()
 
-    similar_books = get_similar_books(books_df, sample_title, top_n=5)
+    similar_books = get_similar_books(books_df, sample_isbn, top_n=5)
     print(similar_books.to_string(index=False))
     print()
 
@@ -177,4 +183,4 @@ if __name__ == "__main__":
     sample_user = users_df["User_ID"].iloc[0]
 
     print("Evaluation for user", sample_user, "seed book:", sample_title)
-    print(evaluate_content_based(sample_user, sample_title, ratings_df, all_books, top_n=10))
+    print(evaluate_content_based(sample_user, sample_isbn, ratings_df, all_books, top_n=10))

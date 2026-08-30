@@ -5,7 +5,7 @@ from content_based import get_similar_books, evaluate_content_based
 from data_loader import load_books, load_all_data, load_user_accounts
 from hybrid import (
     evaluate_hybrid,
-    get_book_titles,
+    get_book_options,
     get_dataset_summary,
     get_default_user,
     hybrid_recommendation,
@@ -79,11 +79,11 @@ def login_screen(users, accounts):
               <p style="opacity: 0.8;">A personal reading room for curious minds.</p>
             </div>
             """, unsafe_allow_html=True)
-            
+
     with panel:
         st.markdown('<p style="color:#9a9d94; font-size:10px; font-weight:700; letter-spacing:.14em;">MEMBER ACCESS</p>', unsafe_allow_html=True)
         st.markdown('<h2 style="margin-top:0">Welcome back.</h2>', unsafe_allow_html=True)
-        
+
         role = st.radio("Role", ["User", "Admin"], horizontal=True)
         username = st.text_input("Username", placeholder="Example: user1 or admin")
         password = st.text_input("Password", type="password")
@@ -92,7 +92,6 @@ def login_screen(users, accounts):
             username = username.strip()
             password = password.strip()
 
-            # Check username, password and role from UserAccounts.csv.
             account = accounts[
                 (accounts["Username"] == username)
                 & (accounts["Password"] == password)
@@ -116,7 +115,6 @@ def login_screen(users, accounts):
                 st.rerun()
 
             else:
-                # Link login account to the user profile in Users.csv.
                 user_profile = users[users["User_ID"] == account["User_ID"]]
 
                 if user_profile.empty:
@@ -133,32 +131,26 @@ def login_screen(users, accounts):
 # MAIN APPLICATION LOGIC
 
 def main():
-    # Load dataset
     books_df, users_df, all_ratings = load_all_data()
     accounts_df = load_user_accounts()
-    
-    # Initialize session state for login
+
     if "current_user" not in st.session_state:
         st.session_state.current_user = None
 
     # 1. LOGIN GATE
     if st.session_state.current_user is None:
         login_screen(users_df, accounts_df)
-        return # Stop execution here until login
+        return
 
     # 2. IF LOGGED IN, SHOW THE APP
     current_user_id = st.session_state.current_user['User_ID']
     user_role = st.session_state.role
 
-    # Normal users use the separate user interface.
     if user_role == "User":
         from user_ui import main as user_main
-
         user_main()
         return
 
-    # Admin is not part of recommendation ratings.
-    # Therefore, admin uses the most active user as demo user.
     if user_role == "Admin":
         recommendation_user_id = get_default_user()
     else:
@@ -173,10 +165,9 @@ def main():
         st.session_state.current_user = None
         st.session_state.role = None
         st.rerun()
-    
+
     st.sidebar.divider()
-    
-    # Sidebar: Dataset summary metrics
+
     summary = get_dataset_summary()
     st.sidebar.subheader("Dataset Summary")
     st.sidebar.metric("Total Books", summary["total_books"])
@@ -189,7 +180,6 @@ def main():
         st.sidebar.write("Login Accounts:", len(accounts_df))
         st.sidebar.write("Demo User for Recommendation:", recommendation_user_id)
 
-    # Main UI Styling
     st.markdown(
         """
         <style>
@@ -206,8 +196,12 @@ def main():
         unsafe_allow_html=True
     )
 
-    # User input controls
-    book_titles = get_book_titles()
+    # Book options are (ISBN, "Title — Author (Year)") pairs so that books
+    # sharing the same Title can still be told apart in the dropdown.
+    book_options = get_book_options()
+    label_by_isbn = {isbn: label for isbn, label in book_options}
+    isbn_by_label = {label: isbn for isbn, label in book_options}
+
     with st.container(border=True):
         st.subheader("Select Recommendation Input")
         col1, col2, col3 = st.columns(3)
@@ -217,7 +211,8 @@ def main():
                 ["Content-Based", "Collaborative Filtering", "Hybrid", "Compare All 3"]
             )
         with col2:
-            selected_book = st.selectbox("Select Book", book_titles)
+            selected_label = st.selectbox("Select Book", list(isbn_by_label.keys()))
+            selected_book = isbn_by_label[selected_label]  # ISBN
         with col3:
             top_n = st.slider("Number of Recommendations", 5, 20, 10)
 
@@ -225,58 +220,59 @@ def main():
 
     # Recommendation and evaluation logic
     if recommend_button:
-        # Normal users use their own User_ID.
-        # Admin uses a demo User_ID from the dataset.
         uid = recommendation_user_id
+        try:
+            if recommendation_method == "Content-Based":
+                recommendations = get_similar_books(load_books(), selected_book, top_n=top_n)
+                evaluation = evaluate_content_based(uid, selected_book, all_ratings, load_books(), top_n=top_n)
+                st.subheader("Content-Based Result")
+                show_metrics_row(evaluation)
+                display_recommendations(recommendations, recommendation_method)
 
-        if recommendation_method == "Content-Based":
-            recommendations = get_similar_books(load_books(), selected_book, top_n=top_n)
-            evaluation = evaluate_content_based(uid, selected_book, all_ratings, load_books(), top_n=top_n)
-            st.subheader("Content-Based Result")
-            show_metrics_row(evaluation)
-            display_recommendations(recommendations, recommendation_method)
+            elif recommendation_method == "Collaborative Filtering":
+                recommendations = collaborative_recommendation(user_id=uid, top_n=top_n + 1)
+                recommendations = recommendations[recommendations["ISBN"] != selected_book].head(top_n)
+                evaluation = evaluate_collaborative(uid, top_n=top_n)
+                st.subheader("Collaborative Filtering Result")
+                show_metrics_row(evaluation)
+                display_recommendations(recommendations, recommendation_method)
 
-        elif recommendation_method == "Collaborative Filtering":
-            recommendations = collaborative_recommendation(user_id=uid, top_n=top_n + 1)
-            recommendations = recommendations[recommendations["Title"] != selected_book].head(top_n)
-            evaluation = evaluate_collaborative(uid, top_n=top_n)
-            st.subheader("Collaborative Filtering Result")
-            show_metrics_row(evaluation)
-            display_recommendations(recommendations, recommendation_method)
+            elif recommendation_method == "Hybrid":
+                recommendations = hybrid_recommendation(uid, selected_book, top_n=top_n)
+                evaluation = evaluate_hybrid(uid, selected_book, top_n=top_n)
+                st.subheader("Hybrid Result")
+                show_metrics_row(evaluation)
+                display_recommendations(recommendations, recommendation_method)
 
-        elif recommendation_method == "Hybrid":
-            recommendations = hybrid_recommendation(uid, selected_book, top_n=top_n)
-            evaluation = evaluate_hybrid(uid, selected_book, top_n=top_n)
-            st.subheader("Hybrid Result")
-            show_metrics_row(evaluation)
-            display_recommendations(recommendations, recommendation_method)
+            elif recommendation_method == "Compare All 3":
+                st.subheader(f"Comparative Evaluation (@ {top_n})")
+                cb_eval = evaluate_content_based(uid, selected_book, all_ratings, load_books(), top_n=top_n)
+                cf_eval = evaluate_collaborative(uid, top_n=top_n)
+                hy_eval = evaluate_hybrid(uid, selected_book, top_n=top_n)
 
-        elif recommendation_method == "Compare All 3":
-            st.subheader(f"Comparative Evaluation (@ {top_n})")
-            cb_eval = evaluate_content_based(uid, selected_book, all_ratings, load_books(), top_n=top_n)
-            cf_eval = evaluate_collaborative(uid, top_n=top_n)
-            hy_eval = evaluate_hybrid(uid, selected_book, top_n=top_n)
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.markdown("**Content-Based**")
+                    show_metrics_row(cb_eval)
+                with c2:
+                    st.markdown("**Collaborative**")
+                    show_metrics_row(cf_eval)
+                with c3:
+                    st.markdown("**Hybrid**")
+                    show_metrics_row(hy_eval)
 
-            c1, c2, c3 = st.columns(3)
-            with c1:
-                st.markdown("**Content-Based**")
-                show_metrics_row(cb_eval)
-            with c2:
-                st.markdown("**Collaborative**")
-                show_metrics_row(cf_eval)
-            with c3:
-                st.markdown("**Hybrid**")
-                show_metrics_row(hy_eval)
+                tab1, tab2, tab3 = st.tabs(["Content-Based", "Collaborative", "Hybrid"])
+                with tab1:
+                    display_recommendations(get_similar_books(load_books(), selected_book, top_n=top_n), "Content-Based")
+                with tab2:
+                    cf_recs = collaborative_recommendation(user_id=uid, top_n=top_n + 1)
+                    cf_recs = cf_recs[cf_recs["ISBN"] != selected_book].head(top_n)
+                    display_recommendations(cf_recs, "Collaborative Filtering")
+                with tab3:
+                    display_recommendations(hybrid_recommendation(uid, selected_book, top_n=top_n), "Hybrid")
 
-            tab1, tab2, tab3 = st.tabs(["Content-Based", "Collaborative", "Hybrid"])
-            with tab1:
-                display_recommendations(get_similar_books(load_books(), selected_book, top_n=top_n), "Content-Based")
-            with tab2:
-                cf_recs = collaborative_recommendation(user_id=uid, top_n=top_n + 1)
-                cf_recs = cf_recs[cf_recs["Title"] != selected_book].head(top_n)
-                display_recommendations(cf_recs, "Collaborative Filtering")
-            with tab3:
-                display_recommendations(hybrid_recommendation(uid, selected_book, top_n=top_n), "Hybrid")
+        except ValueError as e:
+            st.error(str(e))
     else:
         st.info("Select an algorithm and click 'Generate Recommendations' to begin.")
 
