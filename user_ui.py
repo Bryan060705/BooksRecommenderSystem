@@ -577,8 +577,13 @@ def main() -> None:
         st.markdown(f'<h1 class="hero-title">{title_text}</h1>', unsafe_allow_html=True)
 
     if view == "Discover":
+        # related_recommendations() checks st.session_state.selected_book
+        # itself and no-ops if nothing is selected -- it must run even
+        # with an active search query, otherwise clicking "Show similar
+        # books" on a search result sets selected_book but nothing ever
+        # renders it.
+        related_recommendations(books, ratings)
         if not query:
-            related_recommendations(books, ratings)
             recommendation_strip(ratings)
             featured_card(books, ratings)
     elif view == "Profile":
