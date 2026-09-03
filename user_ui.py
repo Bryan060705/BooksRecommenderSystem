@@ -14,6 +14,7 @@ COVER_COLORS = ["#6a7656", "#ad6447", "#577383", "#6d5968"]
 ADMIN_PASSWORD = "admin123"
 VIEWS = ["Discover", "My shelf", "My ratings", "Profile"]
 MAX_BOOKS = 18
+SEARCH_CANDIDATE_LIMIT = 300  # fetch this many matches before paginating in pages of MAX_BOOKS
 
 # --- DATA LOADING ---
 @st.cache_data(show_spinner=False)
@@ -55,6 +56,50 @@ def genre_options(books: pd.DataFrame) -> list[str]:
 def average_rating(ratings: pd.DataFrame, isbn: str) -> float:
     rows = ratings.loc[ratings["ISBN"] == isbn, "Rating_num"]
     return round(float(rows.mean()), 1) if len(rows) else 0.0
+
+
+# --- PAGINATION HELPERS ---
+def paginate(df: pd.DataFrame, page: int, page_size: int = MAX_BOOKS) -> pd.DataFrame:
+    """Return the slice of df for the given 1-indexed page."""
+    start = (page - 1) * page_size
+    return df.iloc[start : start + page_size]
+
+
+def total_pages_for(count: int, page_size: int = MAX_BOOKS) -> int:
+    """Ceiling-divide count of items into pages (minimum 1 page)."""
+    return max(1, -(-count // page_size))
+
+
+def pagination_controls(total_items: int, key_prefix: str, page_size: int = MAX_BOOKS) -> None:
+    """
+    Render Prev / page-label / Next controls and mutate
+    st.session_state.page accordingly. Call this right after the
+    book_grid() it belongs to.
+    """
+    total = total_pages_for(total_items, page_size)
+    # Clamp in case filters shrank the result set out from under the
+    # currently selected page.
+    if st.session_state.page > total:
+        st.session_state.page = total
+
+    if total <= 1:
+        return
+
+    p_prev, p_label, p_next = st.columns([1, 2, 1])
+    with p_prev:
+        if st.session_state.page > 1 and st.button("← Previous", key=f"{key_prefix}_prev"):
+            st.session_state.page -= 1
+            st.rerun()
+    with p_label:
+        st.markdown(
+            f'<p class="muted" style="text-align:center;margin-top:8px">'
+            f'Page {st.session_state.page} of {total}</p>',
+            unsafe_allow_html=True,
+        )
+    with p_next:
+        if st.session_state.page < total and st.button("Next →", key=f"{key_prefix}_next"):
+            st.session_state.page += 1
+            st.rerun()
 
 
 # --- STYLING (CSS) ---
@@ -249,6 +294,7 @@ def book_grid(
     selectable: bool = False,
     score_col: str | None = None,
     user_rating_col: str | None = None,
+    key_prefix: str = "grid",
 ) -> None:
     """
     Render books as cards.
@@ -262,7 +308,8 @@ def book_grid(
     rows = list(books.itertuples(index=False))
     for start in range(0, len(rows), columns):
         cols = st.columns(columns, gap="medium")
-        for col, row in zip(cols, rows[start : start + columns]):
+        for i, (col, row) in enumerate(zip(cols, rows[start : start + columns])):
+            position = start + i
             book_data = pd.Series(row._asdict())
             rating = average_rating(ratings, book_data["ISBN"])
             with col:
@@ -294,7 +341,10 @@ def book_grid(
                         unsafe_allow_html=True,
                     )
                 if selectable:
-                    if st.button("Show similar books", key=f"similar_{book_data['ISBN']}"):
+                    if st.button(
+                        "Show similar books",
+                        key=f"{key_prefix}similar_{position}_{book_data['ISBN']}",
+                    ):
                         # Store the ISBN, not the Title -- Titles can repeat
                         # across different books.
                         st.session_state.selected_book = book_data["ISBN"]
@@ -307,6 +357,7 @@ def get_personalized_recommendations(user_id: str, top_n: int = 8) -> pd.DataFra
     from hybrid import personalized_recommendation
 
     result = personalized_recommendation(user_id, top_n)
+    result = result.drop_duplicates(subset="ISBN")
 
     for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
         result[col] = result[col].astype(str)
@@ -317,10 +368,11 @@ def get_personalized_recommendations(user_id: str, top_n: int = 8) -> pd.DataFra
 
 
 @st.cache_data(show_spinner=False)
-def get_hybrid_search_results(user_id: str, query: str, top_n: int = 18) -> pd.DataFrame:
+def get_hybrid_search_results(user_id: str, query: str, top_n: int = SEARCH_CANDIDATE_LIMIT) -> pd.DataFrame:
     from hybrid import hybrid_search
 
     result = hybrid_search(user_id, query, top_n=top_n)
+    result = result.drop_duplicates(subset="ISBN")
 
     for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
         if col in result.columns:
@@ -358,7 +410,7 @@ def recommendation_strip(ratings: pd.DataFrame) -> None:
     st.markdown('<p class="eyebrow">PICKED FOR YOU</p>', unsafe_allow_html=True)
     st.markdown('<h2 style="margin:0 0 6px">Recommended for you</h2>', unsafe_allow_html=True)
 
-    book_grid(recommendations.head(8), ratings, columns=4)
+    book_grid(recommendations.head(8), ratings, columns=4, selectable=True, key_prefix="foryou")
 
 
 # --- "YOU MAY ALSO LIKE" (book-triggered recommendations) ---
@@ -371,6 +423,7 @@ def get_related_recommendations(user_id: str, selected_isbn: str, top_n: int = 8
     from hybrid import hybrid_recommendation
 
     result = hybrid_recommendation(user_id, selected_isbn, top_n=top_n, remove_rated=True)
+    result = result.drop_duplicates(subset="ISBN")
 
     for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
         result[col] = result[col].astype(str)
@@ -426,7 +479,7 @@ def related_recommendations(books: pd.DataFrame, ratings: pd.DataFrame) -> None:
         st.info("No related books found for this title.")
         return
 
-    book_grid(recommendations.head(8), ratings, columns=4, score_col="Match_%")
+    book_grid(recommendations.head(8), ratings, columns=4, selectable=True, score_col="Match_%", key_prefix="related")
 
 
 # --- PROFILE PAGE ---
@@ -471,6 +524,7 @@ def main() -> None:
     st.session_state.setdefault("current_user", None)
     st.session_state.setdefault("error", "")
     st.session_state.setdefault("selected_book", None)
+    st.session_state.setdefault("page", 1)
 
     if st.session_state.current_user is None:
         login_screen(users)
@@ -506,6 +560,14 @@ def main() -> None:
             st.session_state.current_user = None
             st.rerun()
 
+    # Reset to page 1 whenever the active filters change (view, search
+    # query, or genre) -- otherwise a user on page 3 of "My ratings" who
+    # switches to "Discover" would see an empty page instead of results.
+    filters_key = (view, query)
+    if st.session_state.get("_last_filters") != filters_key:
+        st.session_state.page = 1
+        st.session_state["_last_filters"] = filters_key
+
     # Content
     heading, count_box = st.columns([3, 1])
     with heading:
@@ -525,6 +587,13 @@ def main() -> None:
 
     genre = st.selectbox("Genre", genre_options(books), label_visibility="collapsed")
 
+    # Genre changes should also reset paging; checked after the widget
+    # renders since we need its current value.
+    full_filters_key = (view, query, genre)
+    if st.session_state.get("_last_full_filters") != full_filters_key:
+        st.session_state.page = 1
+        st.session_state["_last_full_filters"] = full_filters_key
+
     if query and view == "Discover":
         try:
             hybrid_results = get_hybrid_search_results(user["User_ID"], query)
@@ -534,11 +603,12 @@ def main() -> None:
         if genre and genre != "All genres" and not hybrid_results.empty:
             hybrid_results = hybrid_results[hybrid_results["Genre"] == genre]
 
-        final_visible = hybrid_results.head(MAX_BOOKS)
+        total_results = len(hybrid_results)
+        final_visible = paginate(hybrid_results, st.session_state.page)
 
         with count_box:
             st.markdown(
-                f'<div class="count" style="text-align:right"><strong>{len(hybrid_results)}</strong>'
+                f'<div class="count" style="text-align:right"><strong>{total_results}</strong>'
                 '<div class="muted">titles found</div></div>',
                 unsafe_allow_html=True,
             )
@@ -546,9 +616,11 @@ def main() -> None:
         book_grid(
             final_visible,
             ratings,
-            selectable=False,
+            selectable=True,
             score_col="Match_%",
+            key_prefix="search",
         )
+        pagination_controls(total_results, key_prefix="search")
     else:
         visible = books.copy()
         if query:
@@ -569,11 +641,12 @@ def main() -> None:
             ).rename(columns={"Rating": "Your_Rating"})
             user_rating_col = "Your_Rating"
 
-        final_visible = visible.head(MAX_BOOKS)
+        total_results = len(visible)
+        final_visible = paginate(visible, st.session_state.page)
 
         with count_box:
             st.markdown(
-                f'<div class="count" style="text-align:right"><strong>{len(visible)}</strong>'
+                f'<div class="count" style="text-align:right"><strong>{total_results}</strong>'
                 '<div class="muted">titles found</div></div>',
                 unsafe_allow_html=True,
             )
@@ -583,7 +656,9 @@ def main() -> None:
             ratings,
             selectable=(view == "Discover"),
             user_rating_col=user_rating_col,
+            key_prefix="browse",
         )
+        pagination_controls(total_results, key_prefix="browse")
 
 
 if __name__ == "__main__":
