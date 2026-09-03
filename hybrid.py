@@ -286,6 +286,103 @@ def get_popular_books(top_n=10):
     ].head(top_n)
 
 
+def find_seed_book(query):
+    """
+    Find the best matching book for a text query using TF-IDF cosine similarity.
+
+    Takes a free-text query (e.g. "magic adventure") and returns the ISBN
+    of the most similar book in the dataset based on feature soup content.
+
+    Returns:
+        ISBN string, or None if query is empty / no books found.
+    """
+    from content_based import build_tfidf_similarity_matrix, _clean_text
+    from sklearn.feature_extraction.text import TfidfVectorizer
+
+    books, _, _ = load_all_data()
+    if books.empty or not query or not query.strip():
+        return None
+
+    books_indexed, similarity_matrix = build_tfidf_similarity_matrix(books)
+
+    query_clean = _clean_text(query)
+    if not query_clean:
+        return None
+
+    vectorizer = TfidfVectorizer(stop_words="english", min_df=1)
+    vectorizer.fit(books_indexed["feature_soup"])
+    query_vec = vectorizer.transform([query_clean])
+
+    from sklearn.metrics.pairwise import cosine_similarity
+    query_sim = cosine_similarity(query_vec, vectorizer.transform(books_indexed["feature_soup"])).flatten()
+
+    best_idx = query_sim.argmax()
+    if query_sim[best_idx] <= 0:
+        return None
+
+    return books_indexed.iloc[best_idx]["ISBN"]
+
+
+def hybrid_search(user_id, query, top_n=10, genre=None, content_threshold=0.1):
+    """
+    Hybrid search: find the best matching book for a query via TF-IDF,
+    then use it as a seed for hybrid recommendation.
+
+    The seed book itself (the best TF-IDF match for the query) is forced
+    to the very top as a perfect-match result, followed by two tiers:
+
+        1. Content-relevant books (content_score >= content_threshold),
+           ranked by hybrid_score. These actually relate to the query.
+        2. Collaborative-only books (content_score < threshold), ranked by
+           collaborative_score. These are just books the user might like,
+           unrelated to the query topic.
+
+    So a search for "heaven" shows Pigs in Heaven first, then other
+    heaven-relevant books, then personal recommendations.
+    """
+    seed_isbn = find_seed_book(query)
+    if seed_isbn is None:
+        return pd.DataFrame()
+
+    result = hybrid_recommendation(
+        user_id=user_id,
+        selected_book_isbn=seed_isbn,
+        top_n=top_n * 3,
+        remove_rated=True,
+    )
+
+    if genre and genre != "All genres":
+        result = result[result["Genre"] == genre]
+
+    if result.empty:
+        return result
+
+    books, _, _ = load_all_data()
+    seed_row = books[books["ISBN"] == seed_isbn]
+    if not seed_row.empty and (genre is None or genre == "All genres" or seed_row.iloc[0]["Genre"] == genre):
+        seed_entry = seed_row[
+            ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]
+        ].copy()
+        seed_entry["content_score"] = 1.0
+        seed_entry["collaborative_score"] = 1.0
+        seed_entry["hybrid_score"] = 1.0
+        if seed_entry["ISBN"].astype(str).isin(result["ISBN"].astype(str)).any():
+            result = result[
+                result["ISBN"].astype(str) != seed_entry["ISBN"].iloc[0]
+            ]
+        result = pd.concat([seed_entry, result], ignore_index=True)
+
+    relevant = result[result["content_score"] >= content_threshold].copy()
+    relevant = relevant.sort_values(by="hybrid_score", ascending=False)
+
+    other = result[result["content_score"] < content_threshold].copy()
+    other = other.sort_values(by="collaborative_score", ascending=False)
+
+    result = pd.concat([relevant, other], ignore_index=True)
+
+    return result.head(top_n)
+
+
 def personalized_recommendation(user_id, top_n=10):
     """
     Personalized recommendation: recommend books for a logged-in user.

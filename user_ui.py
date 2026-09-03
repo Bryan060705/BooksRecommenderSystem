@@ -316,6 +316,23 @@ def get_personalized_recommendations(user_id: str, top_n: int = 8) -> pd.DataFra
     return result
 
 
+@st.cache_data(show_spinner=False)
+def get_hybrid_search_results(user_id: str, query: str, top_n: int = 18) -> pd.DataFrame:
+    from hybrid import hybrid_search
+
+    result = hybrid_search(user_id, query, top_n=top_n)
+
+    for col in ["ISBN", "Title", "Author", "Year", "Publisher", "Genre", "Image_URL"]:
+        if col in result.columns:
+            result[col] = result[col].astype(str)
+    if "Image_URL" in result.columns:
+        result["Image_URL"] = result["Image_URL"].replace("Unknown", "")
+    if "hybrid_score" in result.columns:
+        result["Match_%"] = (result["hybrid_score"].clip(lower=0, upper=1) * 100).round().astype(int)
+
+    return result
+
+
 def recommendation_strip(ratings: pd.DataFrame) -> None:
     """
     Personalized recommendation strip: shown at the top of the Discover page.
@@ -498,51 +515,75 @@ def main() -> None:
         st.markdown(f'<h1 class="hero-title">{title_text}</h1>', unsafe_allow_html=True)
 
     if view == "Discover":
-        related_recommendations(books, ratings)
-
         if not query:
+            related_recommendations(books, ratings)
             recommendation_strip(ratings)
-        featured_card(books, ratings)
+            featured_card(books, ratings)
     elif view == "Profile":
         profile_page(user, ratings, books)
         return
 
     genre = st.selectbox("Genre", genre_options(books), label_visibility="collapsed")
 
-    visible = books.copy()
-    if query:
-        visible = visible[
-            (visible["Title"].str.lower().str.contains(query.lower(), regex=False)) |
-            (visible["Author"].str.lower().str.contains(query.lower(), regex=False))
-        ]
-    if genre != "All genres":
-        visible = visible[visible["Genre"] == genre]
+    if query and view == "Discover":
+        try:
+            hybrid_results = get_hybrid_search_results(user["User_ID"], query)
+        except ValueError:
+            hybrid_results = pd.DataFrame()
 
-    user_rating_col = None
-    if view == "My shelf":
-        visible = visible[visible["ISBN"].isin(rated_isbns)]
-    elif view == "My ratings":
-        visible = visible[visible["ISBN"].isin(rated_isbns)]
-        visible = visible.merge(
-            user_ratings[["ISBN", "Rating"]], on="ISBN", how="left"
-        ).rename(columns={"Rating": "Your_Rating"})
-        user_rating_col = "Your_Rating"
+        if genre and genre != "All genres" and not hybrid_results.empty:
+            hybrid_results = hybrid_results[hybrid_results["Genre"] == genre]
 
-    final_visible = visible.head(MAX_BOOKS)
+        final_visible = hybrid_results.head(MAX_BOOKS)
 
-    with count_box:
-        st.markdown(
-            f'<div class="count" style="text-align:right"><strong>{len(visible)}</strong>'
-            '<div class="muted">titles found</div></div>',
-            unsafe_allow_html=True,
+        with count_box:
+            st.markdown(
+                f'<div class="count" style="text-align:right"><strong>{len(hybrid_results)}</strong>'
+                '<div class="muted">titles found</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        book_grid(
+            final_visible,
+            ratings,
+            selectable=False,
+            score_col="Match_%",
         )
+    else:
+        visible = books.copy()
+        if query:
+            visible = visible[
+                (visible["Title"].str.lower().str.contains(query.lower(), regex=False)) |
+                (visible["Author"].str.lower().str.contains(query.lower(), regex=False))
+            ]
+        if genre != "All genres":
+            visible = visible[visible["Genre"] == genre]
 
-    book_grid(
-        final_visible,
-        ratings,
-        selectable=(view == "Discover"),
-        user_rating_col=user_rating_col,
-    )
+        user_rating_col = None
+        if view == "My shelf":
+            visible = visible[visible["ISBN"].isin(rated_isbns)]
+        elif view == "My ratings":
+            visible = visible[visible["ISBN"].isin(rated_isbns)]
+            visible = visible.merge(
+                user_ratings[["ISBN", "Rating"]], on="ISBN", how="left"
+            ).rename(columns={"Rating": "Your_Rating"})
+            user_rating_col = "Your_Rating"
+
+        final_visible = visible.head(MAX_BOOKS)
+
+        with count_box:
+            st.markdown(
+                f'<div class="count" style="text-align:right"><strong>{len(visible)}</strong>'
+                '<div class="muted">titles found</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        book_grid(
+            final_visible,
+            ratings,
+            selectable=(view == "Discover"),
+            user_rating_col=user_rating_col,
+        )
 
 
 if __name__ == "__main__":
