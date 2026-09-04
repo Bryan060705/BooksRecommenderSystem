@@ -152,9 +152,9 @@ def main():
         return
 
     if user_role == "Admin":
-        recommendation_user_id = get_default_user()
+        default_user_id = get_default_user()
     else:
-        recommendation_user_id = current_user_id
+        default_user_id = current_user_id
 
     # Sidebar: User Info and Logout
     st.sidebar.title("Books For You")
@@ -178,7 +178,7 @@ def main():
     if user_role == "Admin":
         st.sidebar.subheader("Admin View")
         st.sidebar.write("Login Accounts:", len(accounts_df))
-        st.sidebar.write("Demo User for Recommendation:", recommendation_user_id)
+        st.sidebar.write("Default User for Recommendation:", default_user_id)
 
     st.markdown(
         """
@@ -204,17 +204,49 @@ def main():
 
     with st.container(border=True):
         st.subheader("Select Recommendation Input")
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            recommendation_method = st.selectbox(
-                "Select Algorithm",
-                ["Content-Based", "Collaborative Filtering", "Hybrid", "Compare All 3"]
-            )
-        with col2:
-            selected_label = st.selectbox("Select Book", list(isbn_by_label.keys()))
-            selected_book = isbn_by_label[selected_label]  # ISBN
-        with col3:
-            top_n = st.slider("Number of Recommendations", 5, 20, 10)
+
+        # Build user selector for admins (a specific user instead of the default user)
+        user_labels = {
+            str(user_id): f"{str(user_id)} — {location}"
+            for user_id, location in zip(users_df["User_ID"], users_df["Location"])
+        }
+        default_label = user_labels.get(str(default_user_id), str(default_user_id))
+
+        if user_role == "Admin":
+            user_col1, user_col2, user_col3, user_col4 = st.columns(4)
+            with user_col1:
+                selected_user_label = st.selectbox(
+                    "Select User (for recommendation)",
+                    list(user_labels.values()),
+                    index=list(user_labels.values()).index(default_label),
+                )
+            with user_col2:
+                recommendation_method = st.selectbox(
+                    "Select Algorithm",
+                    ["Content-Based", "Collaborative Filtering", "Hybrid", "Compare All 3"]
+                )
+            with user_col3:
+                selected_label = st.selectbox("Select Book", list(isbn_by_label.keys()))
+                selected_book = isbn_by_label[selected_label]  # ISBN
+            with user_col4:
+                top_n = st.slider("Number of Recommendations", 5, 20, 10)
+
+            # Map the selected label back to a User_ID
+            user_id_by_label = {label: user_id for user_id, label in user_labels.items()}
+            recommendation_user_id = user_id_by_label[selected_user_label]
+        else:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                recommendation_method = st.selectbox(
+                    "Select Algorithm",
+                    ["Content-Based", "Collaborative Filtering", "Hybrid", "Compare All 3"]
+                )
+            with col2:
+                selected_label = st.selectbox("Select Book", list(isbn_by_label.keys()))
+                selected_book = isbn_by_label[selected_label]  # ISBN
+            with col3:
+                top_n = st.slider("Number of Recommendations", 5, 20, 10)
+            recommendation_user_id = current_user_id
 
         recommend_button = st.button("Generate Recommendations", use_container_width=True)
 
